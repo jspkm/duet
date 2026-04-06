@@ -1,20 +1,8 @@
 # Duet
 
-Your personal speech and expertise coach. Duet records your meetings, analyzes how you speak, and helps you actually get better through practice drills and targeted study.
+Great communicators know their stuff. Duet helps you become one by coaching how you say it and how well you know it.
 
-## What it does
-
-**Speech Coach** (works from day one, zero setup)
-- Records your meetings and detects disfluencies: filler words, repetitions, restarts, long pauses
-- Plays back the exact moments where your delivery was weak
-- Coaches you on how to say it better, then records your re-delivery
-- Tracks your improvement over time
-
-**Knowledge Coach** (grows with you)
-- Upload internal documents as your knowledge base
-- Duet compares what you said against what the documents say
-- Identifies knowledge gaps and builds a study plan
-- Organize everything into subjects
+Record your meetings. Hear where you stumbled. Practice speaking and subject matter until you don't with Duet's expert coaching.
 
 ## How it works
 
