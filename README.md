@@ -7,10 +7,10 @@ Record your meetings. Hear where you stumbled. Practice speaking and subject mat
 ## How it works
 
 1. **Start a session** before or during a meeting
-2. Duet sends audio to AssemblyAI for transcription and disfluency detection
-3. Claude analyzes flagged moments and generates coaching
-4. **Practice drills** play your weak moments back and let you try again (max 3 attempts per moment)
-5. **Dashboard** tracks your progress: filler counts, disfluency trends, speaking pace
+2. Duet transcribes and detects disfluencies, then generates coaching for each flagged moment
+3. **Practice drills** play your weak moments back and let you try again
+4. **Upload documents** related to your subject area. Duet uses them as ground truth to coach you toward real expertise, supplemented by related information it finds
+5. **Dashboard** tracks your progress over time
 
 ## Architecture
 
