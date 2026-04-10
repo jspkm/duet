@@ -324,6 +324,53 @@ pub async fn save_user_name(
         "UPDATE voice_profiles SET user_name = ?1 WHERE id = 1",
         rusqlite::params![user_name],
     ).map_err(|e| e.to_string())?;
+
+    // Update old transcripts: replace user's speaker label with their name
+    // Find which speaker is the user (most words heuristic from stored speaker pref)
+    let my_speaker: Option<String> = None; // Will be determined per-recording below
+
+    let mut stmt = conn.prepare(
+        "SELECT id, speaker_segments FROM recordings WHERE speaker_segments IS NOT NULL"
+    ).map_err(|e| e.to_string())?;
+
+    let rows: Vec<(i64, String)> = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    }).map_err(|e| e.to_string())?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    for (rec_id, segments_json) in rows {
+        if let Ok(mut segments) = serde_json::from_str::<Vec<serde_json::Value>>(&segments_json) {
+            // Find the speaker with the most words (the user)
+            let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            for seg in &segments {
+                if let Some(spk) = seg.get("speaker").and_then(|s| s.as_str()) {
+                    let words = seg.get("text").and_then(|t| t.as_str()).unwrap_or("").split_whitespace().count();
+                    *counts.entry(spk.to_string()).or_insert(0) += words;
+                }
+            }
+            if let Some((top_speaker, _)) = counts.into_iter().max_by_key(|(_, c)| *c) {
+                let mut changed = false;
+                for seg in &mut segments {
+                    if let Some(spk) = seg.get("speaker").and_then(|s| s.as_str()) {
+                        if spk == top_speaker {
+                            seg.as_object_mut().unwrap().insert("speaker".to_string(), json!(user_name.clone()));
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    if let Ok(updated) = serde_json::to_string(&segments) {
+                        let _ = conn.execute(
+                            "UPDATE recordings SET speaker_segments = ?1 WHERE id = ?2",
+                            rusqlite::params![updated, rec_id],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     Ok(json!({"ok": true}))
 }
 
