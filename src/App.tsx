@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { useTheme } from "./theme";
 
-type Screen = "recordings" | "session_detail" | "dashboard" | "study" | "studyplan" | "settings" | "coach";
+type Screen = "recordings" | "session_detail" | "dashboard" | "study" | "studyplan" | "settings" | "coach" | "coach_first";
 
 interface RecordingEntry {
   id: number;
@@ -126,7 +126,20 @@ function App() {
             </a>
           ))}
         </div>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 var(--space-md)" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "var(--space-sm)", padding: "0 var(--space-md)" }}>
+          <button
+            className="btn"
+            style={{
+              width: "100%", padding: "var(--space-xs) var(--space-md)",
+              background: "transparent", color: "var(--color-text-muted)",
+              border: "1px dashed var(--color-border)", fontSize: 11, fontWeight: 500,
+              cursor: "pointer", fontFamily: "var(--font-body)",
+              borderRadius: "var(--radius-md)",
+            }}
+            onClick={() => setScreen("coach_first")}
+          >
+            First Session
+          </button>
           <button
             className="btn"
             style={{
@@ -170,7 +183,8 @@ function App() {
         {screen === "study" && <KnowledgeCoachScreen />}
         {screen === "studyplan" && <StudyPlanScreen />}
         {screen === "settings" && <SettingsScreen />}
-        {screen === "coach" && <CoachScreen />}
+        {screen === "coach" && <CoachScreen forceFirst={false} />}
+        {screen === "coach_first" && <CoachScreen forceFirst={true} />}
       </main>
     </div>
   );
@@ -2695,7 +2709,7 @@ function DashboardScreen() {
 
 type CoachState = "idle" | "intro" | "listening" | "processing" | "speaking" | "wrapping" | "analyzing" | "done";
 
-function CoachScreen() {
+function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const [state, setState] = useState<CoachState>("idle");
   const [history, setHistory] = useState<{ role: "coach" | "user"; text: string }[]>([]);
   const [statusText, setStatusText] = useState("");
@@ -2725,7 +2739,7 @@ function CoachScreen() {
           invoke<{ count: number }>("get_coach_session_count"),
         ]);
         // First session = no voice profile AND no prior coach sessions
-        const first = !profileRes.embedding_json && countRes.count === 0;
+        const first = forceFirst || (!profileRes.embedding_json && countRes.count === 0);
         setIsFirstSession(first);
         setSessionNumber(countRes.count);
         if (profileRes.user_name) setUserName(profileRes.user_name);

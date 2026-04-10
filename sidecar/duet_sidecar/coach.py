@@ -419,12 +419,22 @@ def coach_conversation_turn(params: dict, progress_callback: Callable) -> dict:
     else:
         system_prompt += f"\n\nThe user's name is {user_name}. Use it occasionally."
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=300,
-        system=system_prompt,
-        messages=messages,
-    )
+    import time
+    response = None
+    for attempt in range(3):
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=300,
+                system=system_prompt,
+                messages=messages,
+            )
+            break
+        except Exception as e:
+            if attempt < 2 and ("overloaded" in str(e).lower() or "529" in str(e)):
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise
 
     progress_callback({"type": "progress", "stage": "thinking", "percent": 80})
 
