@@ -320,14 +320,22 @@ pub async fn save_user_name(
     db: State<'_, Database>,
 ) -> Result<Value, String> {
     let conn = db.conn().map_err(|e| e.to_string())?;
+    // Check if name was already set before
+    let had_name: bool = conn.query_row(
+        "SELECT user_name IS NOT NULL AND user_name != '' FROM voice_profiles WHERE id = 1",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(false);
+
     conn.execute(
         "UPDATE voice_profiles SET user_name = ?1 WHERE id = 1",
         rusqlite::params![user_name],
     ).map_err(|e| e.to_string())?;
 
-    // Update old transcripts: replace user's speaker label with their name
-    // Find which speaker is the user (most words heuristic from stored speaker pref)
-    let my_speaker: Option<String> = None; // Will be determined per-recording below
+    // Update old transcripts only on first name capture
+    if had_name {
+        return Ok(json!({"ok": true}));
+    }
 
     let mut stmt = conn.prepare(
         "SELECT id, speaker_segments FROM recordings WHERE speaker_segments IS NOT NULL"
