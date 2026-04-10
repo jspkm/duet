@@ -12,8 +12,9 @@ interface RecordingEntry {
   duration_seconds: number;
   local_audio_path: string;
   transcript_text: string | null;
-  speaker_segments: string | null; // JSON array of {start, end, text, speaker}
+  speaker_segments: string | null;
   name: string | null;
+  session_type: string; // "recording" | "coach" | "coach_first"
 }
 
 interface FlaggedMomentEntry {
@@ -42,6 +43,13 @@ function App() {
       if (event.payload === "settings") setScreen("settings");
     });
     return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // First launch: route to coach if no voice profile
+  useEffect(() => {
+    invoke<{ embedding_json: string | null }>("get_voice_profile").then((res) => {
+      if (!res.embedding_json) setScreen("coach");
+    }).catch(() => {});
   }, []);
 
   return (
@@ -819,6 +827,9 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
                 </select>
+              )}
+              {(r.session_type === "coach" || r.session_type === "coach_first") && (
+                <span className="metric" style={{ color: "var(--color-primary)" }}>Coach</span>
               )}
               <span className="metric">{formatDuration(r.duration_seconds)}</span>
               {r.transcript_text ? (
@@ -2558,21 +2569,513 @@ function DashboardScreen() {
 
 // ── Coach Screen ───────────────────────────────────────────
 
+type CoachState = "idle" | "intro" | "listening" | "processing" | "speaking" | "wrapping" | "analyzing" | "done";
+
 function CoachScreen() {
+  const [state, setState] = useState<CoachState>("idle");
+  const [history, setHistory] = useState<{ role: "coach" | "user"; text: string }[]>([]);
+  const [statusText, setStatusText] = useState("");
+  const [firstImpression, setFirstImpression] = useState<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] } | null>(null);
+  const [isFirstSession, setIsFirstSession] = useState(true);
+  const [sessionNumber, setSessionNumber] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [introAudioPath, setIntroAudioPath] = useState<string | null>(null);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const silenceStartRef = useRef<number>(0);
+  const animFrameRef = useRef<number>(0);
+  const streamRef = useRef<MediaStream | null>(null);
+  const allChunksRef = useRef<Blob[]>([]);
+  const historyRef = useRef<{ role: "coach" | "user"; text: string }[]>([]);
+
+  // Check session count and pre-synthesize intro audio
+  useEffect(() => {
+    (async () => {
+      try {
+        const [profileRes, countRes] = await Promise.all([
+          invoke<{ embedding_json: string | null }>("get_voice_profile"),
+          invoke<{ count: number }>("get_coach_session_count"),
+        ]);
+        const first = !profileRes.embedding_json;
+        setIsFirstSession(first);
+        setSessionNumber(countRes.count);
+
+        // Pre-synthesize intro audio so there's no delay
+        const introText = first
+          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me, what do you do, and what kind of speaking situations are you in?"
+          : "Welcome back. Let's practice. I'll give you a prompt, you speak, and I'll give you feedback. Ready? Start by telling me about something that happened at work recently.";
+
+        const dataDir = await appDataDir();
+        const outputPath = await join(dataDir, "coach", `intro-${Date.now()}.wav`);
+        const { mkdir } = await import("@tauri-apps/plugin-fs");
+        await mkdir(await join(dataDir, "coach"), { recursive: true });
+        await invoke("speak_text", { text: introText, outputPath });
+        setIntroAudioPath(outputPath);
+      } catch {}
+    })();
+  }, []);
+
+  // Play a WAV file from a local path
+  const playCoachAudio = useCallback(async (audioPath: string): Promise<void> => {
+    return new Promise((resolve) => {
+      const src = `asset://localhost/${encodeURIComponent(audioPath)}`;
+      const audio = new Audio(src);
+      audio.onended = () => resolve();
+      audio.onerror = () => resolve(); // Don't block on playback errors
+      audio.play().catch(() => resolve());
+    });
+  }, []);
+
+  // Speak text via Piper TTS and play it
+  const coachSpeak = useCallback(async (text: string): Promise<void> => {
+    const dataDir = await appDataDir();
+    const outputPath = await join(dataDir, "coach", `coach-${Date.now()}.wav`);
+    const { mkdir } = await import("@tauri-apps/plugin-fs");
+    await mkdir(await join(dataDir, "coach"), { recursive: true });
+
+    await invoke("speak_text", { text, outputPath });
+    await playCoachAudio(outputPath);
+  }, [playCoachAudio]);
+
+  // Start listening for user speech with silence detection
+  const startListening = useCallback(async () => {
+    setState("listening");
+    setStatusText("");
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    streamRef.current = stream;
+
+    // Set up audio analysis for silence detection
+    const audioCtx = new AudioContext();
+    audioContextRef.current = audioCtx;
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    analyserRef.current = analyser;
+    silenceStartRef.current = 0;
+
+    // Start recording
+    const fmt = getRecorderMimeType();
+    const recorder = fmt.mimeType ? new MediaRecorder(stream, { mimeType: fmt.mimeType }) : new MediaRecorder(stream);
+    chunksRef.current = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        chunksRef.current.push(e.data);
+        allChunksRef.current.push(e.data);
+      }
+    };
+    recorder.start(1000);
+    mediaRecorderRef.current = recorder;
+
+    // Monitor for silence
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    const checkSilence = () => {
+      if (!analyserRef.current) return;
+      analyserRef.current.getByteFrequencyData(dataArray);
+      const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+
+      const now = Date.now();
+      if (avg < 8) { // Silence threshold
+        if (silenceStartRef.current === 0) silenceStartRef.current = now;
+        const silenceDuration = (now - silenceStartRef.current) / 1000;
+
+        if (silenceDuration > 3.5 && chunksRef.current.length > 2) {
+          // User stopped talking with enough audio
+          stopListeningAndProcess();
+          return;
+        }
+      } else {
+        silenceStartRef.current = 0;
+      }
+
+      animFrameRef.current = requestAnimationFrame(checkSilence);
+    };
+    animFrameRef.current = requestAnimationFrame(checkSilence);
+  }, []);
+
+  // Stop recording and process the user's speech
+  const stopListeningAndProcess = useCallback(async () => {
+    // Stop silence monitoring
+    cancelAnimationFrame(animFrameRef.current);
+    if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
+    analyserRef.current = null;
+
+    // Stop recording
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    mediaRecorderRef.current = null;
+
+    // Stop mic stream
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+
+    setState("processing");
+    setStatusText("Listening...");
+
+    // Save and transcribe
+    try {
+      const fmt = getRecorderMimeType();
+      const blob = new Blob(chunksRef.current, { type: fmt.mimeType || "audio/webm" });
+      if (blob.size < 1000) {
+        // Too little audio, go back to listening
+        await startListening();
+        return;
+      }
+
+      const dataDir = await appDataDir();
+      const tmpPath = await join(dataDir, "coach", `turn-${Date.now()}.${fmt.ext}`);
+      const { writeFile, mkdir, remove } = await import("@tauri-apps/plugin-fs");
+      await mkdir(await join(dataDir, "coach"), { recursive: true });
+      await writeFile(tmpPath, new Uint8Array(await blob.arrayBuffer()));
+
+      setStatusText("Understanding...");
+
+      const speech = await invoke<{ text: string }>("transcribe_fast", { audioPath: tmpPath });
+      const userText = speech.text.trim();
+
+      try { await remove(tmpPath); } catch {}
+
+      if (!userText) {
+        // No speech detected, resume listening
+        await startListening();
+        return;
+      }
+
+      // Check for exit words
+      const lower = userText.toLowerCase();
+      const exitPhrases = ["that's it", "i'm done", "let's stop", "stop", "bye", "we're done", "that's all", "end session"];
+      const wantsToStop = exitPhrases.some((p) => lower.includes(p));
+
+      if (wantsToStop) {
+        historyRef.current = [...historyRef.current, { role: "user", text: userText }];
+        setHistory([...historyRef.current]);
+        setState("wrapping");
+        setStatusText("Wrapping up...");
+        await coachSpeak("Great, that's all I need. Let me put your report together.");
+        historyRef.current = [...historyRef.current, { role: "coach", text: "Great, that's all I need. Let me put your report together." }];
+        setHistory([...historyRef.current]);
+        await runPostSession();
+        return;
+      }
+
+      // Add user turn to history
+      const updatedHistory = [...historyRef.current, { role: "user" as const, text: userText }];
+      historyRef.current = updatedHistory;
+      setHistory([...updatedHistory]);
+
+      setStatusText("Thinking...");
+
+      // Get coach response from Claude
+      const response = await invoke<{ echo: string; next_question: string | null; should_wrap_up: boolean; wrap_up_message: string | null }>(
+        "coach_conversation_turn", {
+          conversationHistory: updatedHistory,
+          userText,
+          isFirstSession,
+        }
+      );
+
+      if (response.should_wrap_up || !response.next_question) {
+        const wrapMsg = response.wrap_up_message || "I think I have a good picture. Let me put together your report.";
+        const coachText = response.echo ? `${response.echo} ${wrapMsg}` : wrapMsg;
+        historyRef.current = [...historyRef.current, { role: "coach", text: coachText }];
+        setHistory([...historyRef.current]);
+        setState("speaking");
+        await coachSpeak(coachText);
+        await runPostSession();
+        return;
+      }
+
+      // Echo + next question
+      const coachText = response.echo
+        ? `${response.echo} ${response.next_question}`
+        : response.next_question;
+
+      historyRef.current = [...historyRef.current, { role: "coach", text: coachText }];
+      setHistory([...historyRef.current]);
+      setState("speaking");
+      await coachSpeak(coachText);
+
+      // Resume listening
+      await startListening();
+
+    } catch (err: any) {
+      console.error("Coach processing error:", err);
+      setError(`Something went wrong: ${err?.message || err}`);
+      setState("idle");
+    }
+  }, [history, isFirstSession, coachSpeak, startListening]);
+
+  // Run post-session analysis (voiceprint, baseline, first impression)
+  const runPostSession = useCallback(async () => {
+    setState("analyzing");
+    setStatusText("Analyzing your speech...");
+
+    try {
+      const fmt = getRecorderMimeType();
+      const fullBlob = new Blob(allChunksRef.current, { type: fmt.mimeType || "audio/webm" });
+      const dataDir = await appDataDir();
+      const fullPath = await join(dataDir, "coach", `session-${Date.now()}.${fmt.ext}`);
+      const { writeFile, mkdir } = await import("@tauri-apps/plugin-fs");
+      await mkdir(await join(dataDir, "coach"), { recursive: true });
+      await writeFile(fullPath, new Uint8Array(await fullBlob.arrayBuffer()));
+
+      // Transcribe full session
+      setStatusText("Transcribing full session...");
+      const speech = await invoke<{
+        transcript: { text: string; words: any[]; segments: any[] };
+        overall_metrics: { filler_count: number; total_disfluencies: number; pause_count: number; avg_pace_wpm: number; word_count: number; duration_seconds: number };
+        duration_seconds: number;
+      }>("analyze_speech", { audioPath: fullPath });
+
+      const duration = speech.duration_seconds;
+      const metrics = speech.overall_metrics;
+      const fillerRate = duration > 0 ? (metrics.filler_count / duration) * 60 : 0;
+      const hedgingRate = duration > 0 ? (metrics.total_disfluencies / duration) * 60 : 0;
+
+      // Voice enrollment (first session only)
+      if (isFirstSession) {
+        setStatusText("Learning your voice...");
+        try {
+          const embResult = await invoke<{ embedding: number[]; dimension: number }>("extract_embedding", { audioPath: fullPath });
+          await invoke("save_voice_profile", { embeddingJson: JSON.stringify(embResult.embedding) });
+        } catch (err) {
+          console.warn("Voice enrollment failed:", err);
+        }
+
+        // Save baseline
+        await invoke("save_baseline", {
+          fillerRate,
+          paceWpm: metrics.avg_pace_wpm,
+          hedgingRate,
+          pauseRate: duration > 0 ? (metrics.pause_count / duration) * 60 : 0,
+          firstSessionId: 0,
+        });
+      }
+
+      // Generate First Impression card
+      setStatusText("Writing your coaching report...");
+      const fullText = history.map((h) => `[${h.role === "coach" ? "Coach" : "You"}] ${h.text}`).join("\n");
+      const impression = await invoke<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] }>(
+        "generate_first_impression", {
+          conversationText: fullText,
+          metrics: { filler_rate: fillerRate, pace_wpm: metrics.avg_pace_wpm, hedging_rate: hedgingRate, pause_count: metrics.pause_count, word_count: metrics.word_count, duration: duration },
+        }
+      );
+
+      setFirstImpression(impression);
+
+      // Save coach session to DB
+      try {
+        await invoke("save_coach_session", {
+          conversationJson: JSON.stringify(historyRef.current),
+          firstImpressionJson: JSON.stringify(impression),
+        });
+      } catch {}
+
+      setState("done");
+      setStatusText("");
+
+    } catch (err: any) {
+      console.error("Post-session error:", err);
+      setError(`Analysis failed: ${err?.message || err}`);
+      // Still save the session even if analysis partially failed
+      try {
+        await invoke("save_coach_session", {
+          conversationJson: JSON.stringify(historyRef.current),
+          firstImpressionJson: null,
+        });
+      } catch {}
+      setState("done");
+    }
+  }, [isFirstSession]);
+
+  // Start the session
+  const startSession = useCallback(async () => {
+    setError(null);
+    setHistory([]);
+    historyRef.current = [];
+    allChunksRef.current = [];
+    setFirstImpression(null);
+
+    setState("intro");
+
+    const introText = isFirstSession
+      ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me, what do you do, and what kind of speaking situations are you in?"
+      : "Welcome back. Let's practice. I'll give you a prompt, you speak, and I'll give you feedback. Ready? Start by telling me about something that happened at work recently.";
+
+    historyRef.current = [{ role: "coach", text: introText }];
+    setHistory([...historyRef.current]);
+
+    try {
+      // Use pre-cached intro audio if available (no synthesis delay)
+      if (introAudioPath) {
+        await playCoachAudio(introAudioPath);
+      } else {
+        await coachSpeak(introText);
+      }
+      await startListening();
+    } catch (err: any) {
+      setError(`Could not start session: ${err?.message || err}`);
+      setState("idle");
+    }
+  }, [isFirstSession, introAudioPath, coachSpeak, playCoachAudio, startListening]);
+
+  // Clean up on unmount
+  useEffect(() => () => {
+    cancelAnimationFrame(animFrameRef.current);
+    audioContextRef.current?.close();
+    mediaRecorderRef.current?.stop();
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+  }, []);
+
+  // ── Render ──
+
+  // Done: show First Impression card
+  if (state === "done") {
+    return (
+      <>
+        <p className="page-label">Coach</p>
+        <h1 className="page-title">{isFirstSession ? "Coach's First Impression" : "Session Summary"}</h1>
+
+        {firstImpression && (
+          <>
+            <div className="card" style={{ marginBottom: "var(--space-md)" }}>
+              <p style={{ fontSize: 15, lineHeight: 1.7, color: "var(--color-text-secondary)" }}>
+                {firstImpression.summary}
+              </p>
+            </div>
+
+            <div className="card" style={{ marginBottom: "var(--space-md)", borderLeft: "3px solid var(--color-primary)", borderRadius: "0 var(--radius-md) var(--radius-md) 0" }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: "var(--color-primary)", marginBottom: "var(--space-xs)" }}>
+                Priority focus area
+              </p>
+              <p style={{ fontSize: 14, color: "var(--color-text)" }}>
+                {firstImpression.focus_area}
+              </p>
+            </div>
+
+            {firstImpression.strengths.length > 0 && (
+              <div className="card" style={{ marginBottom: "var(--space-md)" }}>
+                <h3 className="settings-heading">What you do well</h3>
+                {firstImpression.strengths.map((s, i) => (
+                  <p key={i} style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: "var(--space-xs)" }}>
+                    {s}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {firstImpression.patterns.length > 0 && (
+              <div className="card" style={{ marginBottom: "var(--space-md)" }}>
+                <h3 className="settings-heading">Patterns observed</h3>
+                {firstImpression.patterns.map((p, i) => (
+                  <p key={i} style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: "var(--space-xs)" }}>
+                    {p}
+                  </p>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {error && (
+          <div className="card" style={{ marginBottom: "var(--space-md)" }}>
+            <p style={{ fontSize: 13, color: "var(--color-error)" }}>{error}</p>
+          </div>
+        )}
+
+        <button className="btn btn-primary" onClick={() => { setState("idle"); setFirstImpression(null); }}>
+          Start another session
+        </button>
+      </>
+    );
+  }
+
+  // Active session or idle
   return (
     <>
       <p className="page-label">Coach</p>
       <h1 className="page-title">Talk to Coach</h1>
-      <div className="card" style={{ textAlign: "center", padding: "var(--space-2xl)" }}>
-        <p style={{ fontSize: 48, marginBottom: "var(--space-md)" }}>🎙</p>
-        <p style={{ fontSize: 16, fontWeight: 500, marginBottom: "var(--space-sm)" }}>
-          Coming soon
-        </p>
-        <p style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
-          Your personal speech coach will guide you through a conversation,
-          analyze your speaking patterns, and help you practice.
-        </p>
-      </div>
+
+      {state === "idle" && (
+        <div style={{ textAlign: "center", padding: "var(--space-2xl) 0" }}>
+          {error && (
+            <p style={{ fontSize: 13, color: "var(--color-error)", marginBottom: "var(--space-md)" }}>{error}</p>
+          )}
+          <p style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: "var(--space-lg)", lineHeight: 1.6 }}>
+            {isFirstSession
+              ? "Your coach will introduce itself, ask you a few questions, and learn how you speak. Just talk naturally. No buttons needed during the session."
+              : "Have a conversation with your coach. Talk naturally and the coach will guide you."}
+          </p>
+          <button className="btn btn-primary-large" onClick={startSession}>
+            {isFirstSession ? "Meet your coach" : "Start session"}
+          </button>
+        </div>
+      )}
+
+      {state !== "idle" && (
+        <div style={{ padding: "var(--space-lg) 0" }}>
+          {/* Conversation transcript */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-md)", marginBottom: "var(--space-lg)" }}>
+            {history.map((turn, i) => (
+              <div key={i} style={{ display: "flex", gap: "var(--space-sm)", alignItems: "flex-start" }}>
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  color: turn.role === "coach" ? "var(--color-primary)" : "var(--color-warning)",
+                  minWidth: 45, paddingTop: 2, flexShrink: 0,
+                  fontFamily: "var(--font-mono)",
+                }}>
+                  {turn.role === "coach" ? "Coach" : "You"}
+                </span>
+                <p style={{
+                  fontSize: 14,
+                  color: turn.role === "coach" ? "var(--color-text)" : "var(--color-text-secondary)",
+                  lineHeight: 1.6, margin: 0,
+                  fontWeight: turn.role === "coach" ? 500 : 400,
+                }}>
+                  {turn.text}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {/* Status indicator */}
+          <div style={{ textAlign: "center" }}>
+            {state === "listening" && (
+              <div>
+                <div className="recording-pulse" />
+                <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>Listening...</p>
+              </div>
+            )}
+            {(state === "processing" || state === "analyzing") && (
+              <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
+                {statusText || "Processing..."}
+              </p>
+            )}
+            {state === "speaking" && (
+              <p style={{ fontSize: 13, color: "var(--color-primary)" }}>
+                Coach is speaking...
+              </p>
+            )}
+            {state === "intro" && (
+              <p style={{ fontSize: 13, color: "var(--color-primary)" }}>
+                Coach is speaking...
+              </p>
+            )}
+            {state === "wrapping" && (
+              <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
+                {statusText || "Wrapping up..."}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }

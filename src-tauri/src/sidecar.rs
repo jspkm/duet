@@ -107,8 +107,11 @@ impl SidecarManager {
                 continue;
             }
 
-            let response: SidecarResponse =
-                serde_json::from_str(&line).map_err(|e| format!("Bad JSON from sidecar: {}", e))?;
+            // Skip non-JSON lines (library warnings, log messages, etc.)
+            let response: SidecarResponse = match serde_json::from_str(&line) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
 
             match response.response_type.as_str() {
                 "progress" => {

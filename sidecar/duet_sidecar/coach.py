@@ -272,3 +272,192 @@ Respond in JSON:
         "feedback": result.get("feedback", ""),
         "remaining_issues": result.get("remaining_issues", []),
     }
+
+
+COACH_FIRST_SESSION_SYSTEM = """You are a warm, direct speech coach having a conversation with a new client. This is your first session together. Your goal is to get to know them and hear how they speak naturally.
+
+Rules:
+- Keep your responses SHORT. 1-2 sentences for the echo, 1 sentence for the next question. You're a coach, not a lecturer.
+- Echo back what you heard to show you're listening. Use their words, not a formal summary.
+- Adapt your next question based on what they told you. If they mention sales, ask about pitching. If they mention board meetings, ask about presenting.
+- Sound natural and conversational. Like a real person, not a form.
+- Never use filler words yourself. Model clean speech.
+- If this is the FIRST turn (no conversation history), ask them to tell you about what they do and what kind of speaking situations they're in.
+- After 3-5 exchanges, you should have enough. Wrap up warmly.
+
+Respond in JSON:
+{
+    "echo": "What you say back to acknowledge what they said (1-2 sentences)",
+    "next_question": "Your next question (1 sentence). Set to null if you have enough info and want to wrap up.",
+    "should_wrap_up": false,
+    "wrap_up_message": null
+}
+
+When should_wrap_up is true, set next_question to null and set wrap_up_message to your closing words."""
+
+
+COACH_FOLLOWUP_SESSION_SYSTEM = """You are a direct, encouraging speech coach in a follow-up session with a returning client. You know them already. Your job now is ACTIVE COACHING, not just conversation.
+
+Rules:
+- Keep responses SHORT. 1-2 sentences max.
+- You are here to help them practice. Give them a prompt, listen, then give specific feedback on what you heard.
+- Point out specific disfluencies: "I heard 'um' twice and 'sort of' once in that sentence. Try it again without those."
+- When they improve, acknowledge it: "Much cleaner. Hear the difference?"
+- Suggest concrete rewording: "Instead of 'I sort of think maybe we should', try: 'We should'. Say it."
+- Alternate between: giving a practice prompt, listening, giving feedback, asking to retry.
+- After 4-6 exchanges, wrap up with a brief summary of what improved.
+
+Respond in JSON:
+{
+    "echo": "Your feedback on what they just said. Be specific about disfluencies or improvements. (1-2 sentences)",
+    "next_question": "Your next prompt or request. Can be 'try that again' or a new practice scenario. (1 sentence). Null to wrap up.",
+    "should_wrap_up": false,
+    "wrap_up_message": null
+}
+
+When should_wrap_up is true, set next_question to null and set wrap_up_message to a brief summary of the session."""
+
+
+def coach_conversation_turn(params: dict, progress_callback: Callable) -> dict:
+    """Generate the coach's response in a conversation turn.
+
+    Params:
+        conversation_history: List of {role: "coach"|"user", text: str}
+        user_text: The user's latest transcribed speech
+        is_first_session: Whether this is the first ever session (for voice enrollment)
+
+    Returns:
+        {"echo": str, "next_question": str|null, "should_wrap_up": bool, "wrap_up_message": str|null}
+    """
+    conversation_history = params.get("conversation_history", [])
+    user_text = params.get("user_text", "")
+    is_first_session = params.get("is_first_session", True)
+
+    progress_callback({"type": "progress", "stage": "thinking", "percent": 30})
+
+    client = _get_client()
+
+    # Build conversation for Claude
+    messages = []
+    for turn in conversation_history:
+        role = "assistant" if turn["role"] == "coach" else "user"
+        messages.append({"role": role, "content": turn["text"]})
+
+    # Add the current user turn
+    if user_text:
+        messages.append({"role": "user", "content": user_text})
+
+    # If no messages at all, send a starter
+    if not messages:
+        messages.append({"role": "user", "content": "[Session started. The user is ready. Ask your first question.]"})
+
+    system_prompt = COACH_FIRST_SESSION_SYSTEM if is_first_session else COACH_FOLLOWUP_SESSION_SYSTEM
+
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=300,
+        system=system_prompt,
+        messages=messages,
+    )
+
+    progress_callback({"type": "progress", "stage": "thinking", "percent": 80})
+
+    response_text = response.content[0].text
+    json_text = response_text
+    if "```json" in json_text:
+        json_text = json_text.split("```json")[1].split("```")[0]
+    elif "```" in json_text:
+        json_text = json_text.split("```")[1].split("```")[0]
+
+    try:
+        result = json.loads(json_text.strip())
+    except json.JSONDecodeError:
+        # Fallback if Claude doesn't return valid JSON
+        result = {
+            "echo": response_text[:200],
+            "next_question": "Tell me more about the kind of speaking you do.",
+            "should_wrap_up": False,
+            "wrap_up_message": None,
+        }
+
+    progress_callback({"type": "progress", "stage": "complete", "percent": 100})
+
+    return {
+        "echo": result.get("echo", ""),
+        "next_question": result.get("next_question"),
+        "should_wrap_up": result.get("should_wrap_up", False),
+        "wrap_up_message": result.get("wrap_up_message"),
+    }
+
+
+def generate_first_impression(params: dict, progress_callback: Callable) -> dict:
+    """Generate the Coach's First Impression summary card.
+
+    Params:
+        conversation_text: Full transcript of the first session conversation
+        metrics: {filler_rate, pace_wpm, hedging_rate, pause_count, word_count, duration}
+
+    Returns:
+        {"summary": str, "focus_area": str, "strengths": [str], "patterns": [str]}
+    """
+    conversation_text = params.get("conversation_text", "")
+    metrics = params.get("metrics", {})
+
+    progress_callback({"type": "progress", "stage": "analyzing", "percent": 30})
+
+    client = _get_client()
+
+    user_prompt = f"""Here is the transcript from a first coaching session:
+
+{conversation_text[:6000]}
+
+Speech metrics from this session:
+- Filler rate: {metrics.get('filler_rate', 0):.1f} per minute
+- Pace: {metrics.get('pace_wpm', 0):.0f} words per minute
+- Hedging rate: {metrics.get('hedging_rate', 0):.1f} per minute
+- Pause count: {metrics.get('pause_count', 0)}
+- Total words: {metrics.get('word_count', 0)}
+- Duration: {metrics.get('duration', 0):.0f} seconds
+
+Write a Coach's First Impression. Be warm, direct, specific. Reference their actual words. This is the anchor for their entire coaching journey.
+
+Respond in JSON:
+{{
+    "summary": "3-4 sentence overall first impression. Lead with something positive and specific. Then name the #1 pattern to work on. End with encouragement.",
+    "focus_area": "The single most impactful thing to work on first (1 sentence)",
+    "strengths": ["2-3 specific things they do well"],
+    "patterns": ["2-3 specific patterns observed, with examples from their speech"]
+}}"""
+
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=500,
+        system="You are a professional speech coach writing your first impression of a new client. Be warm, specific, and actionable.",
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+
+    progress_callback({"type": "progress", "stage": "complete", "percent": 100})
+
+    response_text = response.content[0].text
+    json_text = response_text
+    if "```json" in json_text:
+        json_text = json_text.split("```json")[1].split("```")[0]
+    elif "```" in json_text:
+        json_text = json_text.split("```")[1].split("```")[0]
+
+    try:
+        result = json.loads(json_text.strip())
+    except json.JSONDecodeError:
+        result = {
+            "summary": response_text[:500],
+            "focus_area": "Work on reducing filler words",
+            "strengths": [],
+            "patterns": [],
+        }
+
+    return {
+        "summary": result.get("summary", ""),
+        "focus_area": result.get("focus_area", ""),
+        "strengths": result.get("strengths", []),
+        "patterns": result.get("patterns", []),
+    }

@@ -147,6 +147,101 @@ pub async fn get_flagged_moments(
 }
 
 #[tauri::command]
+pub async fn save_coach_session(
+    conversation_json: String,
+    first_impression_json: Option<String>,
+    db: State<'_, Database>,
+) -> Result<Value, String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    let session_number: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(session_number), 0) + 1 FROM coach_session_history",
+        [],
+        |r| r.get(0),
+    ).unwrap_or(1);
+    conn.execute(
+        "INSERT INTO coach_session_history (session_number, conversation_json, first_impression_json) VALUES (?1, ?2, ?3)",
+        rusqlite::params![session_number, conversation_json, first_impression_json],
+    ).map_err(|e| e.to_string())?;
+    Ok(json!({"session_number": session_number}))
+}
+
+#[tauri::command]
+pub async fn get_coach_session_count(
+    db: State<'_, Database>,
+) -> Result<Value, String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM coach_session_history",
+        [],
+        |r| r.get(0),
+    ).unwrap_or(0);
+    Ok(json!({"count": count}))
+}
+
+#[tauri::command]
+pub async fn get_latest_coach_session(
+    db: State<'_, Database>,
+) -> Result<Value, String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    let result = conn.query_row(
+        "SELECT session_number, conversation_json, first_impression_json, created_at FROM coach_session_history ORDER BY id DESC LIMIT 1",
+        [],
+        |row| Ok(json!({
+            "session_number": row.get::<_, i64>(0)?,
+            "conversation_json": row.get::<_, Option<String>>(1)?,
+            "first_impression_json": row.get::<_, Option<String>>(2)?,
+            "created_at": row.get::<_, String>(3)?,
+        })),
+    );
+    match result {
+        Ok(val) => Ok(val),
+        Err(_) => Ok(json!(null)),
+    }
+}
+
+#[tauri::command]
+pub async fn transcribe_fast(
+    audio_path: String,
+    app: AppHandle,
+    sidecar: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    let params = json!({
+        "audio_path": audio_path,
+    });
+    sidecar.send_command("transcribe_fast", params, &app)
+}
+
+#[tauri::command]
+pub async fn coach_conversation_turn(
+    conversation_history: Value,
+    user_text: String,
+    is_first_session: bool,
+    app: AppHandle,
+    sidecar: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    let params = json!({
+        "conversation_history": conversation_history,
+        "user_text": user_text,
+        "is_first_session": is_first_session,
+    });
+    sidecar.send_command("coach_conversation_turn", params, &app)
+}
+
+#[tauri::command]
+pub async fn generate_first_impression(
+    conversation_text: String,
+    metrics: Value,
+    app: AppHandle,
+    sidecar: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    let params = json!({
+        "conversation_text": conversation_text,
+        "metrics": metrics,
+    });
+    sidecar.send_command("generate_first_impression", params, &app)
+}
+
+#[tauri::command]
 pub async fn speak_text(
     text: String,
     output_path: String,

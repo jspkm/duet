@@ -20,8 +20,9 @@ pub struct Recording {
     pub duration_seconds: f64,
     pub local_audio_path: String,
     pub transcript_text: Option<String>,
-    pub speaker_segments: Option<String>, // JSON
+    pub speaker_segments: Option<String>,
     pub name: Option<String>,
+    pub session_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -243,6 +244,25 @@ impl Database {
             )?;
         }
 
+        if version < 5 {
+            conn.execute_batch(
+                "
+                ALTER TABLE recordings ADD COLUMN session_type TEXT NOT NULL DEFAULT 'recording';
+                -- session_type: 'recording' (normal), 'coach' (coach session), 'coach_first' (first session)
+
+                CREATE TABLE IF NOT EXISTS coach_session_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_number INTEGER NOT NULL DEFAULT 1,
+                    conversation_json TEXT,
+                    first_impression_json TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now') || 'Z')
+                );
+
+                INSERT INTO schema_version (version) VALUES (5);
+                ",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -276,7 +296,7 @@ impl Database {
     pub fn list_recordings(&self) -> Result<Vec<Recording>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, recorded_at, duration_seconds, local_audio_path, transcript_text, speaker_segments, name
+            "SELECT id, recorded_at, duration_seconds, local_audio_path, transcript_text, speaker_segments, name, session_type
              FROM recordings ORDER BY recorded_at DESC"
         )?;
         let rows = stmt.query_map([], |row| {
@@ -288,6 +308,7 @@ impl Database {
                 transcript_text: row.get(4)?,
                 speaker_segments: row.get(5)?,
                 name: row.get(6)?,
+                session_type: row.get::<_, String>(7).unwrap_or_else(|_| "recording".to_string()),
             })
         })?;
         rows.collect()
@@ -296,7 +317,7 @@ impl Database {
     pub fn get_recording(&self, id: i64) -> Result<Recording> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, recorded_at, duration_seconds, local_audio_path, transcript_text, speaker_segments, name
+            "SELECT id, recorded_at, duration_seconds, local_audio_path, transcript_text, speaker_segments, name, session_type
              FROM recordings WHERE id = ?1",
             params![id],
             |row| {
@@ -308,6 +329,7 @@ impl Database {
                     transcript_text: row.get(4)?,
                     speaker_segments: row.get(5)?,
                     name: row.get(6)?,
+                    session_type: row.get::<_, String>(7).unwrap_or_else(|_| "recording".to_string()),
                 })
             },
         )

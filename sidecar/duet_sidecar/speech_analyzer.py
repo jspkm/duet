@@ -29,6 +29,15 @@ def _get_hf_token():
     return os.environ.get("HF_TOKEN") or os.environ.get("DUET_HF_TOKEN") or True
 
 
+def _get_whisper_model_fast():
+    """Small model for short conversational turns. Near-instant on CPU."""
+    if "whisper_fast" not in _models:
+        _models["whisper_fast"] = whisperx.load_model(
+            "base", _DEVICE, compute_type=_COMPUTE_TYPE,
+        )
+    return _models["whisper_fast"]
+
+
 def _get_whisper_model():
     if "whisper" not in _models:
         _models["whisper"] = whisperx.load_model(
@@ -137,6 +146,37 @@ def analyze_speech(params: dict, progress_callback: Callable) -> dict:
 
     progress_callback({"type": "progress", "stage": "complete", "percent": 100})
     return analysis
+
+
+def transcribe_fast(params: dict, progress_callback: Callable) -> dict:
+    """Fast transcription for short clips (conversation turns).
+
+    Uses whisper base model for near-instant transcription.
+    No alignment, no diarization. Just text.
+
+    Params:
+        audio_path: Path to audio file
+
+    Returns:
+        {"text": str, "duration_seconds": float}
+    """
+    audio_path = params.get("audio_path")
+    if not audio_path:
+        raise ValueError("audio_path is required")
+
+    audio = whisperx.load_audio(audio_path)
+    model = _get_whisper_model_fast()
+    result = model.transcribe(audio, batch_size=_BATCH_SIZE)
+
+    text = " ".join(seg.get("text", "") for seg in result.get("segments", []))
+    duration = len(audio) / 16000.0
+
+    progress_callback({"type": "progress", "stage": "complete", "percent": 100})
+
+    return {
+        "text": text.strip(),
+        "duration_seconds": round(duration, 1),
+    }
 
 
 def analyze_words(params: dict, progress_callback: Callable) -> dict:
