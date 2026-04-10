@@ -2731,12 +2731,9 @@ function CoachScreen() {
         if (profileRes.user_name) setUserName(profileRes.user_name);
 
         // Pre-synthesize intro audio so there's no delay
-        const hasName = !!profileRes.user_name;
         const introText = first
-          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? First, what's your name?"
-          : hasName
-            ? `Welcome back, ${profileRes.user_name}. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.`
-            : "Welcome back. Before we start, I don't think I caught your name last time. What should I call you?";
+          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me your name and what you do."
+          : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.";
 
         const dataDir = await appDataDir();
         const outputPath = await join(dataDir, "coach", `intro-${Date.now()}.wav`);
@@ -2907,6 +2904,7 @@ function CoachScreen() {
           conversationHistory: updatedHistory,
           userText,
           isFirstSession,
+          sessionNumber: sessionNumber + 1,
         }
       );
 
@@ -3054,10 +3052,8 @@ function CoachScreen() {
     setState("intro");
 
     const introText = isFirstSession
-      ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? First, what's your name?"
-      : userName
-        ? `Welcome back, ${userName}. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.`
-        : "Welcome back. Before we start, I don't think I caught your name last time. What should I call you?";
+      ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me your name and what you do."
+      : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.";
 
     historyRef.current = [{ role: "coach", text: introText }];
     setHistory([...historyRef.current]);

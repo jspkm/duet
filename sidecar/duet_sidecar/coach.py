@@ -318,7 +318,12 @@ COACH_FOLLOWUP_SESSION_SYSTEM = """You are a direct, encouraging speech coach in
 - Name the exact filler words you heard. "I heard 'um' and 'like'" not "you had some fillers."
 - Be warm but direct. Like a sports coach, not a therapist.
 - Never use filler words yourself.
-- Questions should be work-relevant: "Walk me through a recent project update", "Explain a decision you made this week", "Pitch an idea you've been thinking about."
+- Questions should be work-relevant and DIFFERENT every session. Vary the topics:
+  "Walk me through a recent project update" / "Explain a decision you made this week" /
+  "Pitch an idea you've been thinking about" / "Describe a challenge you're facing" /
+  "How would you explain your team's work to a new hire" / "Tell me about a win from this week" /
+  "How would you push back on a request you disagree with" / "Summarize a meeting you attended recently"
+  Never repeat a question from the current session.
 
 Respond in JSON:
 {
@@ -361,9 +366,14 @@ def coach_conversation_turn(params: dict, progress_callback: Callable) -> dict:
     if user_text:
         messages.append({"role": "user", "content": user_text})
 
+    session_number = params.get("session_number", 1)
+
     # If no messages at all, send a starter
     if not messages:
-        messages.append({"role": "user", "content": "[Session started. The user is ready. Ask your first question.]"})
+        if is_first_session:
+            messages.append({"role": "user", "content": "[Session started. The user is ready. Ask your first question.]"})
+        else:
+            messages.append({"role": "user", "content": f"[Practice session #{session_number} started. Pick a DIFFERENT practice topic than previous sessions. The user is ready.]"})
 
     system_prompt = COACH_FIRST_SESSION_SYSTEM if is_first_session else COACH_FOLLOWUP_SESSION_SYSTEM
 
