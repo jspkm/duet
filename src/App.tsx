@@ -2728,6 +2728,9 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const animFrameRef = useRef<number>(0);
   const streamRef = useRef<MediaStream | null>(null);
   const allChunksRef = useRef<Blob[]>([]);
+  const turnStartChunkIdx = useRef(0); // Index into allChunksRef where current turn started
+  const sessionRecorderRef = useRef<MediaRecorder | null>(null); // Single recorder for whole session
+  const sessionStreamRef = useRef<MediaStream | null>(null);
   const historyRef = useRef<{ role: "coach" | "user"; text: string }[]>([]);
 
   // Check session count and pre-synthesize intro audio
@@ -2789,13 +2792,21 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     await playCoachAudio(outputPath);
   }, [playCoachAudio]);
 
-  // Start listening for user speech with silence detection
-  const startListening = useCallback(async () => {
-    setState("listening");
-    setStatusText("");
-
+  // Start the session-wide recorder (called once at session start)
+  const startSessionRecorder = useCallback(async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    streamRef.current = stream;
+    sessionStreamRef.current = stream;
+
+    const fmt = getRecorderMimeType();
+    const recorder = fmt.mimeType ? new MediaRecorder(stream, { mimeType: fmt.mimeType }) : new MediaRecorder(stream);
+    allChunksRef.current = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        allChunksRef.current.push(e.data);
+      }
+    };
+    recorder.start(1000);
+    sessionRecorderRef.current = recorder;
 
     // Set up audio analysis for silence detection
     const audioCtx = new AudioContext();
@@ -2805,22 +2816,19 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     analyser.fftSize = 512;
     source.connect(analyser);
     analyserRef.current = analyser;
+  }, []);
+
+  // Start listening for a turn (mark where this turn's chunks begin, start silence detection)
+  const startListening = useCallback(async () => {
+    setState("listening");
+    setStatusText("");
+    turnStartChunkIdx.current = allChunksRef.current.length;
     silenceStartRef.current = 0;
 
-    // Start recording
-    const fmt = getRecorderMimeType();
-    const recorder = fmt.mimeType ? new MediaRecorder(stream, { mimeType: fmt.mimeType }) : new MediaRecorder(stream);
-    chunksRef.current = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        chunksRef.current.push(e.data);
-        allChunksRef.current.push(e.data);
-      }
-    };
-    recorder.start(1000);
-    mediaRecorderRef.current = recorder;
+    // Start silence monitoring
+    const analyser = analyserRef.current;
+    if (!analyser) return;
 
-    // Monitor for silence
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     const checkSilence = () => {
       if (!analyserRef.current) return;
@@ -2828,12 +2836,12 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
 
       const now = Date.now();
-      if (avg < 8) { // Silence threshold
+      const turnChunks = allChunksRef.current.length - turnStartChunkIdx.current;
+      if (avg < 8) {
         if (silenceStartRef.current === 0) silenceStartRef.current = now;
         const silenceDuration = (now - silenceStartRef.current) / 1000;
 
-        if (silenceDuration > 3.5 && chunksRef.current.length > 2) {
-          // User stopped talking with enough audio
+        if (silenceDuration > 3.5 && turnChunks > 2) {
           stopListeningAndProcess();
           return;
         }
@@ -2846,37 +2854,24 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     animFrameRef.current = requestAnimationFrame(checkSilence);
   }, []);
 
-  // Stop recording and process the user's speech
+  // Process the user's speech from current turn (recorder stays running)
   const stopListeningAndProcess = useCallback(async () => {
-    // Stop silence monitoring
+    // Stop silence monitoring only (recorder keeps running)
     cancelAnimationFrame(animFrameRef.current);
-    if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
-    analyserRef.current = null;
-
-    // Stop recording
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
-    }
-    mediaRecorderRef.current = null;
-
-    // Stop mic stream
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
 
     setState("processing");
-    setStatusText("Listening...");
+    setStatusText("");
 
-    // Save and transcribe
+    // Grab this turn's chunks
     try {
+      const turnChunks = allChunksRef.current.slice(turnStartChunkIdx.current);
       const fmt = getRecorderMimeType();
-      const blob = new Blob(chunksRef.current, { type: fmt.mimeType || "audio/webm" });
+      const blob = new Blob(turnChunks, { type: fmt.mimeType || "audio/webm" });
       if (blob.size < 1000) {
         await startListening();
         return;
       }
 
-      // Fast path: save file and transcribe with minimal overhead
       const dataDir = await appDataDir();
       const tmpPath = await join(dataDir, "coach", `turn-${Date.now()}.${fmt.ext}`);
       const fs = await import("@tauri-apps/plugin-fs");
@@ -2885,7 +2880,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       const speech = await invoke<{ text: string }>("transcribe_fast", { audioPath: tmpPath });
       const userText = speech.text.trim();
 
-      fs.remove(tmpPath).catch(() => {}); // Don't await cleanup
+      fs.remove(tmpPath).catch(() => {});
 
       if (!userText) {
         // No speech detected, resume listening
@@ -2969,6 +2964,19 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const runPostSession = useCallback(async () => {
     setState("analyzing");
     setStatusText("Analyzing your speech...");
+
+    // Stop the session-wide recorder
+    const recorder = sessionRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    sessionRecorderRef.current = null;
+    // Stop mic
+    sessionStreamRef.current?.getTracks().forEach((t) => t.stop());
+    sessionStreamRef.current = null;
+    // Stop audio context
+    if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
+    analyserRef.current = null;
 
     try {
       const fmt = getRecorderMimeType();
@@ -3067,9 +3075,12 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     setHistory([]);
     historyRef.current = [];
     allChunksRef.current = [];
+    turnStartChunkIdx.current = 0;
     setFirstImpression(null);
 
     try {
+      // Start the session-wide recorder (runs continuously)
+      await startSessionRecorder();
       // First session or first exercise: play intro. After that: skip straight to question.
       const hasIntro = isFirstSession || sessionNumber <= 1;
 
@@ -3113,14 +3124,14 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       setError(`Could not start session: ${err?.message || err}`);
       setState("idle");
     }
-  }, [isFirstSession, sessionNumber, introAudioPath, coachSpeak, playCoachAudio, startListening]);
+  }, [isFirstSession, sessionNumber, introAudioPath, coachSpeak, playCoachAudio, startListening, startSessionRecorder]);
 
   // Clean up on unmount
   useEffect(() => () => {
     cancelAnimationFrame(animFrameRef.current);
     audioContextRef.current?.close();
-    mediaRecorderRef.current?.stop();
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    sessionRecorderRef.current?.stop();
+    sessionStreamRef.current?.getTracks().forEach((t) => t.stop());
   }, []);
 
   // ── Render ──
