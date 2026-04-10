@@ -974,6 +974,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
   const [transcriptExpanded, setTranscriptExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [userName, setUserName] = useState<string | null>(null);
+  const [firstImpression, setFirstImpression] = useState<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] } | null>(null);
 
   useEffect(() => {
     invoke<{ user_name: string | null }>("get_voice_profile").then((res) => {
@@ -987,10 +988,14 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
     Promise.all([
       invoke<RecordingEntry>("get_recording", { id: recordingId }),
       invoke<FlaggedMomentEntry[]>("get_flagged_moments", { recordingId }),
+      invoke<{ impression_json: string | null }>("get_first_impression"),
     ])
-      .then(([rec, mom]) => {
+      .then(([rec, mom, imp]) => {
         setRecording(rec);
         setMoments(mom);
+        if (imp.impression_json && (rec.session_type === "coach_first" || rec.session_type === "coach")) {
+          try { setFirstImpression(JSON.parse(imp.impression_json)); } catch {}
+        }
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -1083,6 +1088,47 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
       <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
         <AudioPlayer clipPath={recording.local_audio_path} />
       </div>
+
+      {/* Coach's First Impression (for coach sessions) */}
+      {firstImpression && (
+        <>
+          <div className="card" style={{ marginBottom: "var(--space-md)" }}>
+            <h3 className="settings-heading">Coach's Report</h3>
+            <p style={{ fontSize: 14, lineHeight: 1.7, color: "var(--color-text-secondary)" }}>
+              {firstImpression.summary}
+            </p>
+          </div>
+
+          {firstImpression.focus_area && (
+            <div className="card" style={{ marginBottom: "var(--space-md)", borderLeft: "3px solid var(--color-primary)", borderRadius: "0 var(--radius-md) var(--radius-md) 0" }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: "var(--color-primary)", marginBottom: "var(--space-xs)" }}>
+                Priority focus area
+              </p>
+              <p style={{ fontSize: 14, color: "var(--color-text)" }}>
+                {firstImpression.focus_area}
+              </p>
+            </div>
+          )}
+
+          {firstImpression.strengths.length > 0 && (
+            <div className="card" style={{ marginBottom: "var(--space-md)" }}>
+              <h3 className="settings-heading">What you do well</h3>
+              {firstImpression.strengths.map((s, i) => (
+                <p key={i} style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: "var(--space-xs)" }}>{s}</p>
+              ))}
+            </div>
+          )}
+
+          {firstImpression.patterns.length > 0 && (
+            <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
+              <h3 className="settings-heading">Patterns observed</h3>
+              {firstImpression.patterns.map((p, i) => (
+                <p key={i} style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: "var(--space-xs)" }}>{p}</p>
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       {/* Transcript */}
       {recording.transcript_text && (
@@ -3102,10 +3148,11 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       const sessionType = isFirstSession ? "coach_first" : "coach";
       const fullText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : (userName || "You")}] ${h.text}`).join("\n");
 
-      await invoke("save_recording", {
+      const saveResult = await invoke<{ id: number }>("save_recording", {
         audioPath: fullPath, duration: 0, sessionType,
         transcript: fullText, segmentsJson: JSON.stringify([]),
       });
+      const recordingId = saveResult.id;
 
       await invoke("save_coach_session", {
         conversationJson: JSON.stringify(historyRef.current),
@@ -3120,10 +3167,15 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       const isFirst = isFirstSession;
       const conversationText = fullText;
       const historySnapshot = [...historyRef.current];
+      const savedRecordingId = recordingId;
 
       (async () => {
         try {
+          // Full transcription + analysis (same pipeline as regular sessions)
           const speech = await invoke<{
+            transcript: { text: string; segments: any[]; words: any[] };
+            disfluencies: { fillers: any[]; all: any[] };
+            flagged_moments: { start: number; end: number; type: string; severity: number; coach_type: string; transcript_text: string; detail: string }[];
             overall_metrics: { filler_count: number; total_disfluencies: number; pause_count: number; avg_pace_wpm: number; word_count: number; duration_seconds: number };
             duration_seconds: number;
           }>("analyze_speech", { audioPath: fullPath });
@@ -3133,6 +3185,59 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
           const fillerRate = duration > 0 ? (metrics.filler_count / duration) * 60 : 0;
           const hedgingRate = duration > 0 ? (metrics.total_disfluencies / duration) * 60 : 0;
 
+          // Update recording with real duration and transcript
+          await invoke("save_recording", {
+            audioPath: fullPath,
+            duration: speech.duration_seconds,
+            recordingId: savedRecordingId,
+            transcript: speech.transcript.text,
+            segmentsJson: JSON.stringify(speech.transcript.segments),
+          });
+
+          // Generate coaching for flagged moments (practice points)
+          const flagged = speech.flagged_moments.map((m) => ({
+            ...m, text: m.transcript_text, coaching_text: null as string | null,
+          }));
+
+          let deliveryScore = 0.0;
+          if (flagged.length > 0) {
+            try {
+              const coaching = await invoke<{
+                coached_moments: { start: number; end: number; coaching_text: string; suggested_delivery: string; topic: string | null }[];
+                overall_score: number; summary: string;
+              }>("generate_coaching", { flaggedMoments: flagged, fullTranscript: speech.transcript.text, docChunks: null });
+
+              deliveryScore = coaching.overall_score;
+              for (const c of coaching.coached_moments) {
+                const match = flagged.find((m) => Math.abs(m.start - c.start) < 0.5);
+                if (match) (match as any).coaching_text = c.coaching_text + "\n\nTry saying: \"" + c.suggested_delivery + "\"";
+              }
+            } catch {}
+          }
+
+          // Save analysis + flagged moments
+          await invoke("save_analysis", {
+            recordingId: savedRecordingId, deliveryScore,
+            fillerCount: metrics.filler_count,
+            hedgingCount: metrics.total_disfluencies,
+            deflectionCount: metrics.pause_count,
+            paceWpm: metrics.avg_pace_wpm,
+            flaggedMoments: flagged,
+          });
+
+          // Extract clips for practice drills
+          if (flagged.length > 0) {
+            try {
+              const clipsDir = await join(await appDataDir(), "clips", `recording-${savedRecordingId}`);
+              await invoke("extract_clips", {
+                audioPath: fullPath,
+                moments: flagged.map((m, i) => ({ id: i, start: m.start, end: m.end })),
+                outputDir: clipsDir,
+              });
+            } catch {}
+          }
+
+          // Voice enrollment (first session only)
           if (isFirst) {
             try {
               const embResult = await invoke<{ embedding: number[] }>("extract_embedding", { audioPath: fullPath });
@@ -3141,10 +3246,11 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
             await invoke("save_baseline", {
               fillerRate, paceWpm: metrics.avg_pace_wpm, hedgingRate,
               pauseRate: duration > 0 ? (metrics.pause_count / duration) * 60 : 0,
-              firstSessionId: 0,
+              firstSessionId: savedRecordingId,
             });
           }
 
+          // Generate first impression / session report
           const impression = await invoke<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] }>(
             "generate_first_impression", {
               conversationText,
@@ -3152,13 +3258,11 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
             }
           );
 
-          // Update the saved coach session with the impression
           await invoke("save_coach_session", {
             conversationJson: JSON.stringify(historySnapshot),
             firstImpressionJson: JSON.stringify(impression),
           });
 
-          // Update UI if still on the done screen
           setFirstImpression(impression);
           setStatusText("");
         } catch (err) {

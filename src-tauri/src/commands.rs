@@ -215,6 +215,22 @@ pub async fn get_latest_coach_session(
 }
 
 #[tauri::command]
+pub async fn get_first_impression(
+    db: State<'_, Database>,
+) -> Result<Value, String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    let result = conn.query_row(
+        "SELECT first_impression_json FROM coach_session_history WHERE session_number = 1 AND first_impression_json IS NOT NULL ORDER BY id DESC LIMIT 1",
+        [],
+        |row| row.get::<_, String>(0),
+    );
+    match result {
+        Ok(json) => Ok(json!({"impression_json": json})),
+        Err(_) => Ok(json!({"impression_json": null})),
+    }
+}
+
+#[tauri::command]
 pub async fn transcribe_fast(
     audio_path: String,
     app: AppHandle,

@@ -41,6 +41,7 @@ pub fn run() {
             commands::evaluate_drill,
             commands::warmup_models,
             commands::save_coach_session,
+            commands::get_first_impression,
             commands::get_coach_session_count,
             commands::get_latest_coach_session,
             commands::transcribe_fast,
