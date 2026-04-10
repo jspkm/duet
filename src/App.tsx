@@ -2990,114 +2990,103 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     }
   }, [history, isFirstSession, coachSpeak, startListening]);
 
-  // Run post-session analysis (voiceprint, baseline, first impression)
+  // Run post-session: save immediately, analyze in background
   const runPostSession = useCallback(async () => {
-    setState("analyzing");
-    setStatusText("Analyzing your speech...");
-
-    // Stop the session-wide recorder
-    const recorder = sessionRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
-    }
+    // Stop recorders and mic immediately
+    const rec = sessionRecorderRef.current;
+    if (rec && rec.state !== "inactive") rec.stop();
     sessionRecorderRef.current = null;
-    // Stop mic
+    const turnRec = turnRecorderRef.current;
+    if (turnRec && turnRec.state !== "inactive") turnRec.stop();
+    turnRecorderRef.current = null;
     sessionStreamRef.current?.getTracks().forEach((t) => t.stop());
     sessionStreamRef.current = null;
-    // Stop audio context
     if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
     analyserRef.current = null;
 
+    // Save audio file and conversation to DB immediately (fast)
     try {
       const fmt = getRecorderMimeType();
       const fullBlob = new Blob(allChunksRef.current, { type: fmt.mimeType || "audio/webm" });
       const dataDir = await appDataDir();
       const fullPath = await join(dataDir, "coach", `session-${Date.now()}.${fmt.ext}`);
-      const { writeFile, mkdir } = await import("@tauri-apps/plugin-fs");
-      await mkdir(await join(dataDir, "coach"), { recursive: true });
-      await writeFile(fullPath, new Uint8Array(await fullBlob.arrayBuffer()));
+      const fs = await import("@tauri-apps/plugin-fs");
+      await fs.writeFile(fullPath, new Uint8Array(await fullBlob.arrayBuffer()));
 
-      // Save as a recording so it appears in Sessions
-      setStatusText("Saving session...");
       const sessionType = isFirstSession ? "coach_first" : "coach";
       const fullText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : (userName || "You")}] ${h.text}`).join("\n");
+
       await invoke("save_recording", {
-        audioPath: fullPath,
-        duration: 0,
-        sessionType,
-        transcript: fullText,
-        segmentsJson: JSON.stringify([]),
+        audioPath: fullPath, duration: 0, sessionType,
+        transcript: fullText, segmentsJson: JSON.stringify([]),
       });
 
-      // Transcribe full session for metrics
-      setStatusText("Analyzing your speech...");
-      const speech = await invoke<{
-        transcript: { text: string; words: any[]; segments: any[] };
-        overall_metrics: { filler_count: number; total_disfluencies: number; pause_count: number; avg_pace_wpm: number; word_count: number; duration_seconds: number };
-        duration_seconds: number;
-      }>("analyze_speech", { audioPath: fullPath });
+      await invoke("save_coach_session", {
+        conversationJson: JSON.stringify(historyRef.current),
+        firstImpressionJson: null,
+      });
 
-      const duration = speech.duration_seconds;
-      const metrics = speech.overall_metrics;
-      const fillerRate = duration > 0 ? (metrics.filler_count / duration) * 60 : 0;
-      const hedgingRate = duration > 0 ? (metrics.total_disfluencies / duration) * 60 : 0;
-
-      // Voice enrollment (first session only)
-      if (isFirstSession) {
-        setStatusText("Learning your voice...");
-        try {
-          const embResult = await invoke<{ embedding: number[]; dimension: number }>("extract_embedding", { audioPath: fullPath });
-          await invoke("save_voice_profile", { embeddingJson: JSON.stringify(embResult.embedding) });
-        } catch (err) {
-          console.warn("Voice enrollment failed:", err);
-        }
-
-        // Save baseline
-        await invoke("save_baseline", {
-          fillerRate,
-          paceWpm: metrics.avg_pace_wpm,
-          hedgingRate,
-          pauseRate: duration > 0 ? (metrics.pause_count / duration) * 60 : 0,
-          firstSessionId: 0,
-        });
-      }
-
-      // Generate First Impression card
-      setStatusText("Writing your coaching report...");
-      const conversationText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : (userName || "You")}] ${h.text}`).join("\n");
-      const impression = await invoke<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] }>(
-        "generate_first_impression", {
-          conversationText,
-          metrics: { filler_rate: fillerRate, pace_wpm: metrics.avg_pace_wpm, hedging_rate: hedgingRate, pause_count: metrics.pause_count, word_count: metrics.word_count, duration: duration },
-        }
-      );
-
-      setFirstImpression(impression);
-
-      // Save coach session to DB
-      try {
-        await invoke("save_coach_session", {
-          conversationJson: JSON.stringify(historyRef.current),
-          firstImpressionJson: JSON.stringify(impression),
-        });
-      } catch {}
-
+      // Show done immediately — user can navigate away
       setState("done");
-      setStatusText("");
+      setStatusText("Session saved. Analyzing in background...");
+
+      // Fire off heavy analysis in background (non-blocking)
+      const isFirst = isFirstSession;
+      const conversationText = fullText;
+      const historySnapshot = [...historyRef.current];
+
+      (async () => {
+        try {
+          const speech = await invoke<{
+            overall_metrics: { filler_count: number; total_disfluencies: number; pause_count: number; avg_pace_wpm: number; word_count: number; duration_seconds: number };
+            duration_seconds: number;
+          }>("analyze_speech", { audioPath: fullPath });
+
+          const duration = speech.duration_seconds;
+          const metrics = speech.overall_metrics;
+          const fillerRate = duration > 0 ? (metrics.filler_count / duration) * 60 : 0;
+          const hedgingRate = duration > 0 ? (metrics.total_disfluencies / duration) * 60 : 0;
+
+          if (isFirst) {
+            try {
+              const embResult = await invoke<{ embedding: number[] }>("extract_embedding", { audioPath: fullPath });
+              await invoke("save_voice_profile", { embeddingJson: JSON.stringify(embResult.embedding) });
+            } catch {}
+            await invoke("save_baseline", {
+              fillerRate, paceWpm: metrics.avg_pace_wpm, hedgingRate,
+              pauseRate: duration > 0 ? (metrics.pause_count / duration) * 60 : 0,
+              firstSessionId: 0,
+            });
+          }
+
+          const impression = await invoke<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] }>(
+            "generate_first_impression", {
+              conversationText,
+              metrics: { filler_rate: fillerRate, pace_wpm: metrics.avg_pace_wpm, hedging_rate: hedgingRate, pause_count: metrics.pause_count, word_count: metrics.word_count, duration: duration },
+            }
+          );
+
+          // Update the saved coach session with the impression
+          await invoke("save_coach_session", {
+            conversationJson: JSON.stringify(historySnapshot),
+            firstImpressionJson: JSON.stringify(impression),
+          });
+
+          // Update UI if still on the done screen
+          setFirstImpression(impression);
+          setStatusText("");
+        } catch (err) {
+          console.warn("Background analysis failed:", err);
+          setStatusText("");
+        }
+      })();
 
     } catch (err: any) {
-      console.error("Post-session error:", err);
-      setError(`Analysis failed: ${err?.message || err}`);
-      // Still save the session even if analysis partially failed
-      try {
-        await invoke("save_coach_session", {
-          conversationJson: JSON.stringify(historyRef.current),
-          firstImpressionJson: null,
-        });
-      } catch {}
+      console.error("Session save failed:", err);
+      setError(`Save failed: ${err?.message || err}`);
       setState("done");
     }
-  }, [isFirstSession]);
+  }, [isFirstSession, userName]);
 
   // Start the session
   const startSession = useCallback(async () => {
