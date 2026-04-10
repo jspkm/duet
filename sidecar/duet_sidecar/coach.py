@@ -282,7 +282,8 @@ Rules:
 - Adapt your next question based on what they told you. If they mention sales, ask about pitching. If they mention board meetings, ask about presenting.
 - Sound natural and conversational. Like a real person, not a form.
 - Never use filler words yourself. Model clean speech.
-- If this is the FIRST turn (no conversation history), ask them to tell you about what they do and what kind of speaking situations they're in.
+- If the user just told you their name, use it from now on. Include their name in the "user_name" field of your response.
+- After the name, ask about what they do and what kind of speaking situations they're in.
 - After 3-5 exchanges, you should have enough. Wrap up warmly.
 
 Respond in JSON:
@@ -290,10 +291,12 @@ Respond in JSON:
     "echo": "What you say back to acknowledge what they said (1-2 sentences)",
     "next_question": "Your next question (1 sentence). Set to null if you have enough info and want to wrap up.",
     "should_wrap_up": false,
-    "wrap_up_message": null
+    "wrap_up_message": null,
+    "user_name": null
 }
 
-When should_wrap_up is true, set next_question to null and set wrap_up_message to your closing words."""
+Set user_name to the user's FIRST name only when they tell you (e.g., if they say "Joseph Kim", set user_name to "Joseph"). Leave null if they haven't said their name yet.
+When should_wrap_up is true, set next_question to null and set wrap_up_message to your closing words. Use their name in the wrap-up if you know it."""
 
 
 COACH_FOLLOWUP_SESSION_SYSTEM = """You are a direct, encouraging speech coach in a follow-up practice session. You know the user already. Your job is ACTIVE COACHING through a structured loop.
@@ -398,6 +401,7 @@ def coach_conversation_turn(params: dict, progress_callback: Callable) -> dict:
         "next_question": result.get("next_question"),
         "should_wrap_up": result.get("should_wrap_up", False),
         "wrap_up_message": result.get("wrap_up_message"),
+        "user_name": result.get("user_name"),
     }
 
 

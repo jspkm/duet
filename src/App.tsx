@@ -2731,9 +2731,12 @@ function CoachScreen() {
         if (profileRes.user_name) setUserName(profileRes.user_name);
 
         // Pre-synthesize intro audio so there's no delay
+        const hasName = !!profileRes.user_name;
         const introText = first
-          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me, what do you do, and what kind of speaking situations are you in?"
-          : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.";
+          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? First, what's your name?"
+          : hasName
+            ? `Welcome back, ${profileRes.user_name}. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.`
+            : "Welcome back. Before we start, I don't think I caught your name last time. What should I call you?";
 
         const dataDir = await appDataDir();
         const outputPath = await join(dataDir, "coach", `intro-${Date.now()}.wav`);
@@ -2899,13 +2902,19 @@ function CoachScreen() {
       setStatusText("Thinking...");
 
       // Get coach response from Claude
-      const response = await invoke<{ echo: string; next_question: string | null; should_wrap_up: boolean; wrap_up_message: string | null }>(
+      const response = await invoke<{ echo: string; next_question: string | null; should_wrap_up: boolean; wrap_up_message: string | null; user_name: string | null }>(
         "coach_conversation_turn", {
           conversationHistory: updatedHistory,
           userText,
           isFirstSession,
         }
       );
+
+      // Save user's name if Claude extracted it
+      if (response.user_name && !userName) {
+        setUserName(response.user_name);
+        invoke("save_user_name", { userName: response.user_name }).catch(() => {});
+      }
 
       if (response.should_wrap_up || !response.next_question) {
         const wrapMsg = response.wrap_up_message || "I think I have a good picture. Let me put together your report.";
@@ -3045,8 +3054,10 @@ function CoachScreen() {
     setState("intro");
 
     const introText = isFirstSession
-      ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me, what do you do, and what kind of speaking situations are you in?"
-      : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.";
+      ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? First, what's your name?"
+      : userName
+        ? `Welcome back, ${userName}. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.`
+        : "Welcome back. Before we start, I don't think I caught your name last time. What should I call you?";
 
     historyRef.current = [{ role: "coach", text: introText }];
     setHistory([...historyRef.current]);
