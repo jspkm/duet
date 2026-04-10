@@ -2599,14 +2599,15 @@ function CoachScreen() {
           invoke<{ embedding_json: string | null }>("get_voice_profile"),
           invoke<{ count: number }>("get_coach_session_count"),
         ]);
-        const first = !profileRes.embedding_json;
+        // First session = no voice profile AND no prior coach sessions
+        const first = !profileRes.embedding_json && countRes.count === 0;
         setIsFirstSession(first);
         setSessionNumber(countRes.count);
 
         // Pre-synthesize intro audio so there's no delay
         const introText = first
           ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me, what do you do, and what kind of speaking situations are you in?"
-          : "Welcome back. Let's practice. I'll give you a prompt, you speak, and I'll give you feedback. Ready? Start by telling me about something that happened at work recently.";
+          : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.";
 
         const dataDir = await appDataDir();
         const outputPath = await join(dataDir, "coach", `intro-${Date.now()}.wav`);
@@ -2907,7 +2908,7 @@ function CoachScreen() {
 
     const introText = isFirstSession
       ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me, what do you do, and what kind of speaking situations are you in?"
-      : "Welcome back. Let's practice. I'll give you a prompt, you speak, and I'll give you feedback. Ready? Start by telling me about something that happened at work recently.";
+      : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.";
 
     historyRef.current = [{ role: "coach", text: introText }];
     setHistory([...historyRef.current]);
@@ -3011,7 +3012,7 @@ function CoachScreen() {
           <p style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: "var(--space-lg)", lineHeight: 1.6 }}>
             {isFirstSession
               ? "Your coach will introduce itself, ask you a few questions, and learn how you speak. Just talk naturally. No buttons needed during the session."
-              : "Have a conversation with your coach. Talk naturally and the coach will guide you."}
+              : "Practice session: your coach will ask questions, listen for fillers and hesitations, and ask you to try again until it's clean."}
           </p>
           <button className="btn btn-primary-large" onClick={startSession}>
             {isFirstSession ? "Meet your coach" : "Start session"}
