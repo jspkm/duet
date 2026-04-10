@@ -263,6 +263,15 @@ impl Database {
             )?;
         }
 
+        if version < 6 {
+            conn.execute_batch(
+                "
+                ALTER TABLE voice_profiles ADD COLUMN user_name TEXT;
+                INSERT INTO schema_version (version) VALUES (6);
+                ",
+            )?;
+        }
+
         Ok(())
     }
 

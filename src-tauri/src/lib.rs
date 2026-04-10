@@ -50,6 +50,7 @@ pub fn run() {
             commands::extract_embedding,
             commands::match_speaker,
             commands::save_voice_profile,
+            commands::save_user_name,
             commands::get_voice_profile,
             commands::save_baseline,
             commands::get_baseline,

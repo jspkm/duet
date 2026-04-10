@@ -301,12 +301,26 @@ pub async fn match_speaker(
 #[tauri::command]
 pub async fn save_voice_profile(
     embedding_json: String,
+    user_name: Option<String>,
     db: State<'_, Database>,
 ) -> Result<Value, String> {
     let conn = db.conn().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT OR REPLACE INTO voice_profiles (id, embedding_json, created_at) VALUES (1, ?1, datetime('now') || 'Z')",
-        rusqlite::params![embedding_json],
+        "INSERT OR REPLACE INTO voice_profiles (id, embedding_json, user_name, created_at) VALUES (1, ?1, ?2, datetime('now') || 'Z')",
+        rusqlite::params![embedding_json, user_name],
+    ).map_err(|e| e.to_string())?;
+    Ok(json!({"ok": true}))
+}
+
+#[tauri::command]
+pub async fn save_user_name(
+    user_name: String,
+    db: State<'_, Database>,
+) -> Result<Value, String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE voice_profiles SET user_name = ?1 WHERE id = 1",
+        rusqlite::params![user_name],
     ).map_err(|e| e.to_string())?;
     Ok(json!({"ok": true}))
 }
@@ -316,14 +330,14 @@ pub async fn get_voice_profile(
     db: State<'_, Database>,
 ) -> Result<Value, String> {
     let conn = db.conn().map_err(|e| e.to_string())?;
-    let result: Result<String, _> = conn.query_row(
-        "SELECT embedding_json FROM voice_profiles WHERE id = 1",
+    let result = conn.query_row(
+        "SELECT embedding_json, user_name FROM voice_profiles WHERE id = 1",
         [],
-        |row| row.get(0),
+        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
     );
     match result {
-        Ok(json) => Ok(json!({"embedding_json": json})),
-        Err(_) => Ok(json!({"embedding_json": null})),
+        Ok((emb, name)) => Ok(json!({"embedding_json": emb, "user_name": name})),
+        Err(_) => Ok(json!({"embedding_json": null, "user_name": null})),
     }
 }
 

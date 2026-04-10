@@ -64,7 +64,7 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
-        const profileRes = await invoke<{ embedding_json: string | null }>("get_voice_profile");
+        const profileRes = await invoke<{ embedding_json: string | null; user_name: string | null }>("get_voice_profile");
         const countRes = await invoke<{ count: number }>("get_coach_session_count");
 
         // Run warmup in background (fast if models already cached)
@@ -400,7 +400,7 @@ function StartSessionButton({ onComplete }: { onComplete: (id: number) => void }
 
           // Try voiceprint matching first (most reliable)
           try {
-            const profileRes = await invoke<{ embedding_json: string | null }>("get_voice_profile");
+            const profileRes = await invoke<{ embedding_json: string | null; user_name: string | null }>("get_voice_profile");
             if (profileRes.embedding_json) {
               const matchRes = await invoke<{ matched_speaker: string | null; similarity: number }>(
                 "match_speaker", {
@@ -949,6 +949,14 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
   const [loading, setLoading] = useState(true);
   const [transcriptExpanded, setTranscriptExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [userName, setUserName] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<{ user_name: string | null }>("get_voice_profile").then((res) => {
+      if (res.user_name) setUserName(res.user_name);
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (recordingId == null) { setLoading(false); return; }
 
@@ -1042,7 +1050,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
         )}
         {localStorage.getItem("duet-speaker-mode") !== "all" && localStorage.getItem("duet-my-speaker") && (
           <span className="metric" style={{ color: "var(--color-text-muted)" }}>
-            Coaching: Speaker {localStorage.getItem("duet-my-speaker")} (you)
+            Coaching: {userName || "You"}
           </span>
         )}
       </div>
@@ -1104,7 +1112,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
                             minWidth: 50, paddingTop: 2, flexShrink: 0,
                             fontFamily: "var(--font-mono)",
                           }}>
-                            {isMe ? "You" : spk}
+                            {isMe ? (userName || "You") : spk}
                           </span>
                           <p style={{
                             fontSize: 14, color: isMe ? "var(--color-text)" : "var(--color-text-secondary)",
@@ -2692,6 +2700,7 @@ function CoachScreen() {
   const [history, setHistory] = useState<{ role: "coach" | "user"; text: string }[]>([]);
   const [statusText, setStatusText] = useState("");
   const [firstImpression, setFirstImpression] = useState<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] } | null>(null);
+  const [userName, setUserName] = useState<string | null>(null);
   const [isFirstSession, setIsFirstSession] = useState(true);
   const [sessionNumber, setSessionNumber] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -2712,13 +2721,14 @@ function CoachScreen() {
     (async () => {
       try {
         const [profileRes, countRes] = await Promise.all([
-          invoke<{ embedding_json: string | null }>("get_voice_profile"),
+          invoke<{ embedding_json: string | null; user_name: string | null }>("get_voice_profile"),
           invoke<{ count: number }>("get_coach_session_count"),
         ]);
         // First session = no voice profile AND no prior coach sessions
         const first = !profileRes.embedding_json && countRes.count === 0;
         setIsFirstSession(first);
         setSessionNumber(countRes.count);
+        if (profileRes.user_name) setUserName(profileRes.user_name);
 
         // Pre-synthesize intro audio so there's no delay
         const introText = first
@@ -2945,7 +2955,7 @@ function CoachScreen() {
       // Save as a recording so it appears in Sessions
       setStatusText("Saving session...");
       const sessionType = isFirstSession ? "coach_first" : "coach";
-      const fullText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : "You"}] ${h.text}`).join("\n");
+      const fullText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : (userName || "You")}] ${h.text}`).join("\n");
       await invoke("save_recording", {
         audioPath: fullPath,
         duration: 0,
@@ -2989,7 +2999,7 @@ function CoachScreen() {
 
       // Generate First Impression card
       setStatusText("Writing your coaching report...");
-      const conversationText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : "You"}] ${h.text}`).join("\n");
+      const conversationText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : (userName || "You")}] ${h.text}`).join("\n");
       const impression = await invoke<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] }>(
         "generate_first_impression", {
           conversationText,
@@ -3160,7 +3170,7 @@ function CoachScreen() {
                   minWidth: 45, paddingTop: 2, flexShrink: 0,
                   fontFamily: "var(--font-mono)",
                 }}>
-                  {turn.role === "coach" ? "Coach" : "You"}
+                  {turn.role === "coach" ? "Coach" : (userName || "You")}
                 </span>
                 <p style={{
                   fontSize: 14,
@@ -3254,8 +3264,47 @@ function SettingsScreen() {
 }
 
 function SettingsGeneral({ mode, setMode }: { mode: string; setMode: (m: "light" | "auto" | "dark") => void }) {
+  const [userName, setUserName] = useState("");
+  const [nameSaved, setNameSaved] = useState(false);
+
+  useEffect(() => {
+    invoke<{ user_name: string | null }>("get_voice_profile").then((res) => {
+      if (res.user_name) setUserName(res.user_name);
+    }).catch(() => {});
+  }, []);
+
   return (
     <>
+      <div className="card">
+        <h3 className="settings-heading">Your Name</h3>
+        <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: "var(--space-sm)" }}>
+          Used in transcripts and coaching to identify your speech.
+        </p>
+        <div style={{ display: "flex", gap: "var(--space-sm)" }}>
+          <input
+            type="text"
+            value={userName}
+            onChange={(e) => { setUserName(e.target.value); setNameSaved(false); }}
+            placeholder="Enter your name"
+            style={{
+              flex: 1, padding: "var(--space-xs) var(--space-sm)",
+              border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)",
+              background: "var(--color-surface)", color: "var(--color-text)",
+              fontFamily: "var(--font-body)", fontSize: 14,
+            }}
+          />
+          <button
+            className="btn btn-primary"
+            style={{ fontSize: 13, padding: "var(--space-xs) var(--space-md)" }}
+            onClick={() => {
+              invoke("save_user_name", { userName: userName.trim() }).then(() => setNameSaved(true)).catch(() => {});
+            }}
+          >
+            {nameSaved ? "Saved" : "Save"}
+          </button>
+        </div>
+      </div>
+
       <div className="card">
         <h3 className="settings-heading">Appearance</h3>
         <div style={{ display: "flex", gap: 0, borderRadius: "var(--radius-md)", overflow: "hidden", border: "1px solid var(--color-border)" }}>
