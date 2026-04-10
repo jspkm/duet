@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { useTheme } from "./theme";
@@ -1859,8 +1859,7 @@ function AudioPlayer({ clipPath }: { clipPath?: string }) {
     );
   }
 
-  // Convert local file path to asset URL for Tauri
-  const audioSrc = `asset://localhost/${encodeURIComponent(clipPath)}`;
+  const audioSrc = convertFileSrc(clipPath);
 
   return (
     <div className="waveform">
@@ -2693,6 +2692,7 @@ function DashboardScreen() {
 
 // ── Coach Screen ───────────────────────────────────────────
 
+
 type CoachState = "idle" | "intro" | "listening" | "processing" | "speaking" | "wrapping" | "analyzing" | "done";
 
 function CoachScreen() {
@@ -2731,16 +2731,21 @@ function CoachScreen() {
         if (profileRes.user_name) setUserName(profileRes.user_name);
 
         // Pre-synthesize intro audio so there's no delay
+        // First session: full intro. First exercise session: explain format. After that: skip intro.
         const introText = first
           ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me your name and what you do."
-          : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.";
+          : countRes.count <= 1
+            ? "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Here's your first one."
+            : null; // No intro needed, jump straight to question
 
-        const dataDir = await appDataDir();
-        const outputPath = await join(dataDir, "coach", `intro-${Date.now()}.wav`);
-        const { mkdir } = await import("@tauri-apps/plugin-fs");
-        await mkdir(await join(dataDir, "coach"), { recursive: true });
-        await invoke("speak_text", { text: introText, outputPath });
-        setIntroAudioPath(outputPath);
+        if (introText) {
+          const dataDir = await appDataDir();
+          const outputPath = await join(dataDir, "coach", `intro-${Date.now()}.wav`);
+          const { mkdir } = await import("@tauri-apps/plugin-fs");
+          await mkdir(await join(dataDir, "coach"), { recursive: true });
+          await invoke("speak_text", { text: introText, outputPath });
+          setIntroAudioPath(outputPath);
+        }
       } catch {}
     })();
   }, []);
@@ -2748,10 +2753,10 @@ function CoachScreen() {
   // Play a WAV file from a local path
   const playCoachAudio = useCallback(async (audioPath: string): Promise<void> => {
     return new Promise((resolve) => {
-      const src = `asset://localhost/${encodeURIComponent(audioPath)}`;
+      const src = convertFileSrc(audioPath);
       const audio = new Audio(src);
       audio.onended = () => resolve();
-      audio.onerror = () => resolve(); // Don't block on playback errors
+      audio.onerror = () => resolve();
       audio.play().catch(() => resolve());
     });
   }, []);
@@ -2905,6 +2910,7 @@ function CoachScreen() {
           userText,
           isFirstSession,
           sessionNumber: sessionNumber + 1,
+          userName: userName || "",
         }
       );
 
@@ -2914,8 +2920,8 @@ function CoachScreen() {
         invoke("save_user_name", { userName: response.user_name }).catch(() => {});
       }
 
-      if (response.should_wrap_up || !response.next_question) {
-        const wrapMsg = response.wrap_up_message || "I think I have a good picture. Let me put together your report.";
+      if (response.should_wrap_up) {
+        const wrapMsg = response.wrap_up_message || "Good session. Let me put together your report.";
         const coachText = response.echo ? `${response.echo} ${wrapMsg}` : wrapMsg;
         historyRef.current = [...historyRef.current, { role: "coach", text: coachText }];
         setHistory([...historyRef.current]);
@@ -2925,10 +2931,10 @@ function CoachScreen() {
         return;
       }
 
-      // Echo + next question
-      const coachText = response.echo
-        ? `${response.echo} ${response.next_question}`
-        : response.next_question;
+      // Build coach response: echo + next question, or just echo (podcast mode)
+      const coachText = response.next_question
+        ? (response.echo ? `${response.echo} ${response.next_question}` : response.next_question)
+        : response.echo;
 
       historyRef.current = [...historyRef.current, { role: "coach", text: coachText }];
       setHistory([...historyRef.current]);
@@ -3049,28 +3055,51 @@ function CoachScreen() {
     allChunksRef.current = [];
     setFirstImpression(null);
 
-    setState("intro");
-
-    const introText = isFirstSession
-      ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me your name and what you do."
-      : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Let's start. Walk me through a decision you made at work this week.";
-
-    historyRef.current = [{ role: "coach", text: introText }];
-    setHistory([...historyRef.current]);
-
     try {
-      // Use pre-cached intro audio if available (no synthesis delay)
-      if (introAudioPath) {
-        await playCoachAudio(introAudioPath);
-      } else {
-        await coachSpeak(introText);
+      // First session or first exercise: play intro. After that: skip straight to question.
+      const hasIntro = isFirstSession || sessionNumber <= 1;
+
+      if (hasIntro) {
+        setState("intro");
+        const introText = isFirstSession
+          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me your name and what you do."
+          : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Here's your first one.";
+
+        historyRef.current = [{ role: "coach", text: introText }];
+        setHistory([...historyRef.current]);
+
+        if (introAudioPath) {
+          await playCoachAudio(introAudioPath);
+        } else {
+          await coachSpeak(introText);
+        }
       }
+
+      // For follow-up sessions, get the first question from Claude
+      if (!isFirstSession) {
+        setState("processing");
+        const response = await invoke<{ echo: string; next_question: string | null; should_wrap_up: boolean; wrap_up_message: string | null; user_name: string | null }>(
+          "coach_conversation_turn", {
+            conversationHistory: historyRef.current,
+            userText: "",
+            isFirstSession: false,
+            sessionNumber: sessionNumber + 1,
+          }
+        );
+        if (response.next_question) {
+          historyRef.current = [...historyRef.current, { role: "coach", text: response.next_question }];
+          setHistory([...historyRef.current]);
+          setState("speaking");
+          await coachSpeak(response.next_question);
+        }
+      }
+
       await startListening();
     } catch (err: any) {
       setError(`Could not start session: ${err?.message || err}`);
       setState("idle");
     }
-  }, [isFirstSession, introAudioPath, coachSpeak, playCoachAudio, startListening]);
+  }, [isFirstSession, sessionNumber, introAudioPath, coachSpeak, playCoachAudio, startListening]);
 
   // Clean up on unmount
   useEffect(() => () => {

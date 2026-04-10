@@ -232,6 +232,7 @@ pub async fn coach_conversation_turn(
     user_text: String,
     is_first_session: bool,
     session_number: Option<i32>,
+    user_name: Option<String>,
     app: AppHandle,
     sidecar: State<'_, SidecarManager>,
 ) -> Result<Value, String> {
@@ -240,6 +241,7 @@ pub async fn coach_conversation_turn(
         "user_text": user_text,
         "is_first_session": is_first_session,
         "session_number": session_number.unwrap_or(1),
+        "user_name": user_name.unwrap_or_default(),
     });
     sidecar.send_command("coach_conversation_turn", params, &app)
 }
