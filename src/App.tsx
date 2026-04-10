@@ -151,7 +151,7 @@ function App() {
             }}
             onClick={() => setScreen("coach")}
           >
-            Talk to Coach
+            Practice
           </button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)", padding: "0 var(--space-md) var(--space-md)" }}>
@@ -2769,7 +2769,10 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
           await invoke("speak_text", { text: introText, outputPath });
           setIntroAudioPath(outputPath);
         }
-      } catch {}
+        setReady(true);
+      } catch {
+        setReady(true);
+      }
     })();
   }, []);
 
@@ -3126,6 +3129,16 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     }
   }, [isFirstSession, sessionNumber, introAudioPath, coachSpeak, playCoachAudio, startListening, startSessionRecorder]);
 
+  // Auto-start: skip idle screen and begin session immediately
+  const [ready, setReady] = useState(false);
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (ready && !autoStarted.current && state === "idle") {
+      autoStarted.current = true;
+      startSession();
+    }
+  }, [ready, state, startSession]);
+
   // Clean up on unmount
   useEffect(() => () => {
     cancelAnimationFrame(animFrameRef.current);
@@ -3201,7 +3214,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   return (
     <>
       <p className="page-label">Coach</p>
-      <h1 className="page-title">Talk to Coach</h1>
+      <h1 className="page-title">Practice</h1>
 
       {state === "idle" && (
         <div style={{ textAlign: "center", padding: "var(--space-2xl) 0" }}>
