@@ -2734,6 +2734,11 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   useEffect(() => {
     (async () => {
       try {
+        // Ensure coach audio directory exists (once)
+        const dataDir = await appDataDir();
+        const { mkdir } = await import("@tauri-apps/plugin-fs");
+        await mkdir(await join(dataDir, "coach"), { recursive: true });
+
         const [profileRes, countRes] = await Promise.all([
           invoke<{ embedding_json: string | null; user_name: string | null }>("get_voice_profile"),
           invoke<{ count: number }>("get_coach_session_count"),
@@ -2780,9 +2785,6 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const coachSpeak = useCallback(async (text: string): Promise<void> => {
     const dataDir = await appDataDir();
     const outputPath = await join(dataDir, "coach", `coach-${Date.now()}.wav`);
-    const { mkdir } = await import("@tauri-apps/plugin-fs");
-    await mkdir(await join(dataDir, "coach"), { recursive: true });
-
     await invoke("speak_text", { text, outputPath });
     await playCoachAudio(outputPath);
   }, [playCoachAudio]);
@@ -2870,23 +2872,20 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       const fmt = getRecorderMimeType();
       const blob = new Blob(chunksRef.current, { type: fmt.mimeType || "audio/webm" });
       if (blob.size < 1000) {
-        // Too little audio, go back to listening
         await startListening();
         return;
       }
 
+      // Fast path: save file and transcribe with minimal overhead
       const dataDir = await appDataDir();
       const tmpPath = await join(dataDir, "coach", `turn-${Date.now()}.${fmt.ext}`);
-      const { writeFile, mkdir, remove } = await import("@tauri-apps/plugin-fs");
-      await mkdir(await join(dataDir, "coach"), { recursive: true });
-      await writeFile(tmpPath, new Uint8Array(await blob.arrayBuffer()));
-
-      setStatusText("Understanding...");
+      const fs = await import("@tauri-apps/plugin-fs");
+      await fs.writeFile(tmpPath, new Uint8Array(await blob.arrayBuffer()));
 
       const speech = await invoke<{ text: string }>("transcribe_fast", { audioPath: tmpPath });
       const userText = speech.text.trim();
 
-      try { await remove(tmpPath); } catch {}
+      fs.remove(tmpPath).catch(() => {}); // Don't await cleanup
 
       if (!userText) {
         // No speech detected, resume listening
