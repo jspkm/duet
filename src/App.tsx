@@ -343,11 +343,30 @@ function StartSessionButton({ onComplete }: { onComplete: (id: number) => void }
         }
 
         if (speakers.size > 1) {
-          // Pick the user's speaker: stored preference or the one who talked most
-          const storedSpeaker = localStorage.getItem("duet-my-speaker");
-          let mySpeaker = storedSpeaker;
-          if (!mySpeaker || !speakers.has(mySpeaker)) {
-            mySpeaker = [...speakers.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+          let mySpeaker: string | null = null;
+
+          // Try voiceprint matching first (most reliable)
+          try {
+            const profileRes = await invoke<{ embedding_json: string | null }>("get_voice_profile");
+            if (profileRes.embedding_json) {
+              const matchRes = await invoke<{ matched_speaker: string | null; similarity: number }>(
+                "match_speaker", {
+                  audioPath: filePath,
+                  segments: speech.transcript.segments,
+                  storedEmbedding: JSON.parse(profileRes.embedding_json),
+                }
+              );
+              if (matchRes.matched_speaker && matchRes.similarity > 0.5) {
+                mySpeaker = matchRes.matched_speaker;
+              }
+            }
+          } catch {}
+
+          // Fallback: stored preference or most words
+          if (!mySpeaker) {
+            const storedSpeaker = localStorage.getItem("duet-my-speaker");
+            mySpeaker = storedSpeaker && speakers.has(storedSpeaker) ? storedSpeaker
+              : [...speakers.entries()].sort((a, b) => b[1] - a[1])[0]![0];
           }
           localStorage.setItem("duet-my-speaker", mySpeaker);
 
@@ -2372,11 +2391,15 @@ interface DashboardData {
 
 function DashboardScreen() {
   const [data, setData] = useState<DashboardData[]>([]);
+  const [baseline, setBaseline] = useState<{ filler_rate: number; pace_wpm: number; hedging_rate: number; pause_rate: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    invoke<DashboardData[]>("get_dashboard")
-      .then(setData)
+    Promise.all([
+      invoke<DashboardData[]>("get_dashboard"),
+      invoke<any>("get_baseline"),
+    ])
+      .then(([d, b]) => { setData(d); if (b) setBaseline(b); })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -2448,6 +2471,46 @@ function DashboardScreen() {
           <p className="stat-label">Filler Trend</p>
         </div>
       </div>
+
+      {/* Baseline comparison */}
+      {baseline && data.length > 1 && (() => {
+        const latestDur = latest.duration_seconds || 1;
+        const currentFillerRate = (latest.filler_count / latestDur) * 60;
+        const fillerImprovement = baseline.filler_rate > 0
+          ? Math.round((1 - currentFillerRate / baseline.filler_rate) * 100)
+          : 0;
+        const paceChange = latest.pace_wpm - baseline.pace_wpm;
+
+        return (
+          <div className="card" style={{ marginBottom: "var(--space-lg)", borderLeft: "3px solid var(--color-primary)", borderRadius: "0 var(--radius-md) var(--radius-md) 0" }}>
+            <h3 className="settings-heading">Since your first session</h3>
+            <div style={{ display: "flex", gap: "var(--space-lg)", flexWrap: "wrap" }}>
+              <div>
+                <p style={{ fontSize: 24, fontWeight: 700, color: fillerImprovement > 0 ? "var(--color-success)" : "var(--color-error)" }}>
+                  {fillerImprovement > 0 ? `${fillerImprovement}%` : fillerImprovement === 0 ? "—" : `+${Math.abs(fillerImprovement)}%`}
+                </p>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                  {fillerImprovement > 0 ? "fewer fillers" : fillerImprovement < 0 ? "more fillers" : "fillers unchanged"}
+                </p>
+              </div>
+              <div>
+                <p style={{ fontSize: 24, fontWeight: 700, color: "var(--color-text)" }}>
+                  {latest.pace_wpm > 0 ? `${Math.round(latest.pace_wpm)}` : "—"}
+                </p>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                  wpm (baseline: {Math.round(baseline.pace_wpm)})
+                </p>
+              </div>
+              <div>
+                <p style={{ fontSize: 24, fontWeight: 700, color: "var(--color-text)" }}>
+                  {latest.delivery_score > 0 ? latest.delivery_score.toFixed(1) : "—"}
+                </p>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>delivery score</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Filler words over time */}
       <div className="card">
@@ -2826,8 +2889,20 @@ function CoachScreen() {
       await mkdir(await join(dataDir, "coach"), { recursive: true });
       await writeFile(fullPath, new Uint8Array(await fullBlob.arrayBuffer()));
 
-      // Transcribe full session
-      setStatusText("Transcribing full session...");
+      // Save as a recording so it appears in Sessions
+      setStatusText("Saving session...");
+      const sessionType = isFirstSession ? "coach_first" : "coach";
+      const fullText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : "You"}] ${h.text}`).join("\n");
+      await invoke("save_recording", {
+        audioPath: fullPath,
+        duration: 0,
+        sessionType,
+        transcript: fullText,
+        segmentsJson: JSON.stringify([]),
+      });
+
+      // Transcribe full session for metrics
+      setStatusText("Analyzing your speech...");
       const speech = await invoke<{
         transcript: { text: string; words: any[]; segments: any[] };
         overall_metrics: { filler_count: number; total_disfluencies: number; pause_count: number; avg_pace_wpm: number; word_count: number; duration_seconds: number };
@@ -2861,10 +2936,10 @@ function CoachScreen() {
 
       // Generate First Impression card
       setStatusText("Writing your coaching report...");
-      const fullText = history.map((h) => `[${h.role === "coach" ? "Coach" : "You"}] ${h.text}`).join("\n");
+      const conversationText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : "You"}] ${h.text}`).join("\n");
       const impression = await invoke<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] }>(
         "generate_first_impression", {
-          conversationText: fullText,
+          conversationText,
           metrics: { filler_rate: fillerRate, pace_wpm: metrics.avg_pace_wpm, hedging_rate: hedgingRate, pause_count: metrics.pause_count, word_count: metrics.word_count, duration: duration },
         }
       );

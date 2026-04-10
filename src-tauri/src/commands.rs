@@ -57,6 +57,7 @@ pub async fn save_recording(
     recording_id: Option<i64>,
     transcript: Option<String>,
     segments_json: Option<String>,
+    session_type: Option<String>,
     db: State<'_, Database>,
 ) -> Result<Value, String> {
     let id = if let Some(existing_id) = recording_id {
@@ -69,6 +70,12 @@ pub async fn save_recording(
         let new_id = db
             .insert_recording(&audio_path, duration)
             .map_err(|e| e.to_string())?;
+        // Set session type if provided
+        if let Some(st) = &session_type {
+            let conn = db.conn().map_err(|e| e.to_string())?;
+            conn.execute("UPDATE recordings SET session_type = ?1 WHERE id = ?2", rusqlite::params![st, new_id])
+                .map_err(|e| e.to_string())?;
+        }
 
         if let (Some(t), Some(s)) = (&transcript, &segments_json) {
             db.update_transcript(new_id, t, s, None)
