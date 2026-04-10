@@ -2715,7 +2715,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const [statusText, setStatusText] = useState("");
   const [firstImpression, setFirstImpression] = useState<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] } | null>(null);
   const [userName, setUserName] = useState<string | null>(null);
-  const [isFirstSession, setIsFirstSession] = useState(true);
+  const [isFirstSession, setIsFirstSession] = useState(forceFirst);
   const [sessionNumber, setSessionNumber] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [introAudioPath, setIntroAudioPath] = useState<string | null>(null);
@@ -2739,7 +2739,8 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
           invoke<{ count: number }>("get_coach_session_count"),
         ]);
         // First session = no voice profile AND no prior coach sessions
-        const first = forceFirst || (!profileRes.embedding_json && countRes.count === 0);
+        // forceFirst from the button is authoritative. Otherwise detect from state.
+        const first = forceFirst ? true : (!profileRes.embedding_json && countRes.count === 0);
         setIsFirstSession(first);
         setSessionNumber(countRes.count);
         if (profileRes.user_name) setUserName(profileRes.user_name);
