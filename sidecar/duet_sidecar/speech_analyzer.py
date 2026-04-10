@@ -266,6 +266,16 @@ def _build_analysis(words, segments, duration, progress_callback):
     for i in range(1, len(words)):
         gap = words[i]["start"] - words[i-1]["end"]
         if gap >= 1.5:
+            # Skip gaps where another speaker is talking in between
+            # (this happens when words are filtered to one speaker)
+            gap_has_other_speech = any(
+                seg["start"] >= words[i-1]["end"] - 0.5 and seg["end"] <= words[i]["start"] + 0.5
+                and seg.get("speaker") != words[i-1].get("speaker")
+                for seg in segments
+            )
+            if gap_has_other_speech:
+                continue
+
             context_before = words[i-1]["text"]
             context_after = words[i]["text"]
             pause_start = words[i-1]["end"]
