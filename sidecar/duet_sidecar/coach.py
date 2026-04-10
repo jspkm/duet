@@ -405,18 +405,10 @@ def coach_conversation_turn(params: dict, progress_callback: Callable) -> dict:
         if is_first_session:
             messages.append({"role": "user", "content": "[Session started. The user is ready. Ask your first question.]"})
         else:
-            # Alternate between practice drills and podcast-style conversation
-            if session_number % 3 == 0:
-                mode = "PODCAST"
-                messages.append({"role": "user", "content": f"[Session #{session_number}. MODE: PODCAST. Have a natural conversation like co-hosts on a podcast. Pick an interesting topic related to their work. Be curious, share a perspective, ask follow-ups. Still note any disfluencies but weave feedback naturally into the conversation instead of stopping to drill. The user is ready.]"})
-            else:
-                mode = "DRILL"
-                messages.append({"role": "user", "content": f"[Session #{session_number}. MODE: DRILL. Generate a fresh practice question. Pick a DIFFERENT topic than previous sessions. The user is ready.]"})
+            messages.append({"role": "user", "content": f"[Practice session #{session_number} started. Generate a fresh practice question. Pick a DIFFERENT topic than previous sessions. The user is ready.]"})
 
     if is_first_session:
         system_prompt = COACH_FIRST_SESSION_SYSTEM
-    elif session_number % 3 == 0:
-        system_prompt = COACH_PODCAST_SYSTEM
     else:
         system_prompt = COACH_FOLLOWUP_SESSION_SYSTEM
 
