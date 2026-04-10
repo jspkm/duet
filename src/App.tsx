@@ -2731,6 +2731,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const turnStartChunkIdx = useRef(0); // Index into allChunksRef where current turn started
   const sessionRecorderRef = useRef<MediaRecorder | null>(null); // Single recorder for whole session
   const sessionStreamRef = useRef<MediaStream | null>(null);
+  const mixedDestRef = useRef<MediaStreamAudioDestinationNode | null>(null); // Mixes mic + coach TTS
   const turnRecorderRef = useRef<MediaRecorder | null>(null); // Short-lived recorder per turn
   const turnChunksRef = useRef<Blob[]>([]);
   const turnResolveRef = useRef<((blob: Blob) => void) | null>(null);
@@ -2779,15 +2780,49 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     })();
   }, []);
 
-  // Play a WAV file from a local path
+  // Play coach audio through AudioContext (routes to speakers + recording)
   const playCoachAudio = useCallback(async (audioPath: string): Promise<void> => {
-    return new Promise((resolve) => {
+    const audioCtx = audioContextRef.current;
+    const mixedDest = mixedDestRef.current;
+
+    // If no AudioContext (session not started yet or ended), use basic playback
+    if (!audioCtx || audioCtx.state === "closed") {
+      return new Promise((resolve) => {
+        const src = convertFileSrc(audioPath);
+        const audio = new Audio(src);
+        audio.onended = () => resolve();
+        audio.onerror = () => resolve();
+        audio.play().catch(() => resolve());
+      });
+    }
+
+    // Fetch the WAV file and decode it
+    try {
       const src = convertFileSrc(audioPath);
-      const audio = new Audio(src);
-      audio.onended = () => resolve();
-      audio.onerror = () => resolve();
-      audio.play().catch(() => resolve());
-    });
+      const response = await fetch(src);
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+      return new Promise((resolve) => {
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        // Route to speakers
+        source.connect(audioCtx.destination);
+        // Route to mixed recording destination
+        if (mixedDest) source.connect(mixedDest);
+        source.onended = () => resolve();
+        source.start();
+      });
+    } catch {
+      // Fallback to basic playback
+      return new Promise((resolve) => {
+        const src = convertFileSrc(audioPath);
+        const audio = new Audio(src);
+        audio.onended = () => resolve();
+        audio.onerror = () => resolve();
+        audio.play().catch(() => resolve());
+      });
+    }
   }, []);
 
   // Speak text via Piper TTS and play it
@@ -2803,8 +2838,26 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     sessionStreamRef.current = stream;
 
+    // Create AudioContext with a mixed destination (mic + coach TTS)
+    const audioCtx = new AudioContext();
+    audioContextRef.current = audioCtx;
+    const micSource = audioCtx.createMediaStreamSource(stream);
+
+    // Analyser for silence detection (connected to mic only)
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    micSource.connect(analyser);
+    analyserRef.current = analyser;
+
+    // Mixed destination: mic + coach audio both route here
+    const mixedDest = audioCtx.createMediaStreamDestination();
+    micSource.connect(mixedDest);
+    mixedDestRef.current = mixedDest;
+
+    // Record from the mixed stream (captures both mic and coach)
     const fmt = getRecorderMimeType();
-    const recorder = fmt.mimeType ? new MediaRecorder(stream, { mimeType: fmt.mimeType }) : new MediaRecorder(stream);
+    const mixedStream = mixedDest.stream;
+    const recorder = fmt.mimeType ? new MediaRecorder(mixedStream, { mimeType: fmt.mimeType }) : new MediaRecorder(mixedStream);
     allChunksRef.current = [];
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
@@ -2813,15 +2866,6 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     };
     recorder.start(1000);
     sessionRecorderRef.current = recorder;
-
-    // Set up audio analysis for silence detection
-    const audioCtx = new AudioContext();
-    audioContextRef.current = audioCtx;
-    const source = audioCtx.createMediaStreamSource(stream);
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 512;
-    source.connect(analyser);
-    analyserRef.current = analyser;
   }, []);
 
   // Start listening for a turn (start a turn recorder + silence detection)
@@ -3219,9 +3263,6 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
           </div>
         )}
 
-        <button className="btn btn-primary" onClick={() => { setState("idle"); setFirstImpression(null); }}>
-          Start another session
-        </button>
       </>
     );
   }
