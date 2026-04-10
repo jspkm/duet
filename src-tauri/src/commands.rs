@@ -147,6 +147,118 @@ pub async fn get_flagged_moments(
 }
 
 #[tauri::command]
+pub async fn speak_text(
+    text: String,
+    output_path: String,
+    app: AppHandle,
+    sidecar: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    let params = json!({
+        "text": text,
+        "output_path": output_path,
+    });
+    sidecar.send_command("speak_text", params, &app)
+}
+
+#[tauri::command]
+pub async fn extract_embedding(
+    audio_path: String,
+    app: AppHandle,
+    sidecar: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    let params = json!({
+        "audio_path": audio_path,
+    });
+    sidecar.send_command("extract_embedding", params, &app)
+}
+
+#[tauri::command]
+pub async fn match_speaker(
+    audio_path: String,
+    segments: Value,
+    stored_embedding: Value,
+    app: AppHandle,
+    sidecar: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    let params = json!({
+        "audio_path": audio_path,
+        "segments": segments,
+        "stored_embedding": stored_embedding,
+    });
+    sidecar.send_command("match_speaker", params, &app)
+}
+
+#[tauri::command]
+pub async fn save_voice_profile(
+    embedding_json: String,
+    db: State<'_, Database>,
+) -> Result<Value, String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR REPLACE INTO voice_profiles (id, embedding_json, created_at) VALUES (1, ?1, datetime('now') || 'Z')",
+        rusqlite::params![embedding_json],
+    ).map_err(|e| e.to_string())?;
+    Ok(json!({"ok": true}))
+}
+
+#[tauri::command]
+pub async fn get_voice_profile(
+    db: State<'_, Database>,
+) -> Result<Value, String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    let result: Result<String, _> = conn.query_row(
+        "SELECT embedding_json FROM voice_profiles WHERE id = 1",
+        [],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(json) => Ok(json!({"embedding_json": json})),
+        Err(_) => Ok(json!({"embedding_json": null})),
+    }
+}
+
+#[tauri::command]
+pub async fn save_baseline(
+    filler_rate: f64,
+    pace_wpm: f64,
+    hedging_rate: f64,
+    pause_rate: f64,
+    first_session_id: i64,
+    db: State<'_, Database>,
+) -> Result<Value, String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR REPLACE INTO user_baseline (id, filler_rate, pace_wpm, hedging_rate, pause_rate, first_session_id, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?5, datetime('now') || 'Z')",
+        rusqlite::params![filler_rate, pace_wpm, hedging_rate, pause_rate, first_session_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(json!({"ok": true}))
+}
+
+#[tauri::command]
+pub async fn get_baseline(
+    db: State<'_, Database>,
+) -> Result<Value, String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    let result = conn.query_row(
+        "SELECT filler_rate, pace_wpm, hedging_rate, pause_rate, first_session_id FROM user_baseline WHERE id = 1",
+        [],
+        |row| {
+            Ok(json!({
+                "filler_rate": row.get::<_, f64>(0)?,
+                "pace_wpm": row.get::<_, f64>(1)?,
+                "hedging_rate": row.get::<_, f64>(2)?,
+                "pause_rate": row.get::<_, f64>(3)?,
+                "first_session_id": row.get::<_, i64>(4)?,
+            }))
+        },
+    );
+    match result {
+        Ok(val) => Ok(val),
+        Err(_) => Ok(json!(null)),
+    }
+}
+
+#[tauri::command]
 pub async fn generate_coaching(
     flagged_moments: Value,
     full_transcript: String,

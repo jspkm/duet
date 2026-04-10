@@ -20,17 +20,22 @@ from duet_sidecar.doc_parser import parse_document
 from duet_sidecar.coach import generate_coaching, evaluate_drill
 from duet_sidecar.clip_extractor import extract_clips
 from duet_sidecar.speech_analyzer import analyze_speech, analyze_words
+from duet_sidecar.tts import speak_text
+from duet_sidecar.voice import extract_embedding, match_speaker
 
 
 HANDLERS = {
     "transcribe": transcribe,              # Whisper (fallback / offline)
     "analyze_delivery": analyze_delivery,  # NLP regex (fallback)
-    "analyze_speech": analyze_speech,      # AssemblyAI (primary — transcribe + analyze in one call)
+    "analyze_speech": analyze_speech,      # WhisperX (on-device transcription + analysis)
     "analyze_words": analyze_words,        # Build analysis from pre-accumulated words (incremental mode)
     "parse_document": parse_document,
     "generate_coaching": generate_coaching,
     "evaluate_drill": evaluate_drill,
     "extract_clips": extract_clips,
+    "speak_text": speak_text,              # Piper TTS (on-device text-to-speech)
+    "extract_embedding": extract_embedding, # pyannote speaker embedding for voice enrollment
+    "match_speaker": match_speaker,        # Cosine-compare voiceprint against diarized speakers
 }
 
 

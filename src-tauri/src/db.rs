@@ -219,6 +219,30 @@ impl Database {
             )?;
         }
 
+        if version < 4 {
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS voice_profiles (
+                    id INTEGER PRIMARY KEY,
+                    embedding_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now') || 'Z')
+                );
+
+                CREATE TABLE IF NOT EXISTS user_baseline (
+                    id INTEGER PRIMARY KEY,
+                    filler_rate REAL NOT NULL DEFAULT 0,
+                    pace_wpm REAL NOT NULL DEFAULT 0,
+                    hedging_rate REAL NOT NULL DEFAULT 0,
+                    pause_rate REAL NOT NULL DEFAULT 0,
+                    first_session_id INTEGER,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now') || 'Z')
+                );
+
+                INSERT INTO schema_version (version) VALUES (4);
+                ",
+            )?;
+        }
+
         Ok(())
     }
 
