@@ -154,6 +154,14 @@ pub async fn get_flagged_moments(
 }
 
 #[tauri::command]
+pub async fn warmup_models(
+    app: AppHandle,
+    sidecar: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    sidecar.send_command("warmup_models", json!({}), &app)
+}
+
+#[tauri::command]
 pub async fn save_coach_session(
     conversation_json: String,
     first_impression_json: Option<String>,

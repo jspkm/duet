@@ -33,6 +33,7 @@ from duet_sidecar.clip_extractor import extract_clips
 from duet_sidecar.speech_analyzer import analyze_speech, analyze_words, transcribe_fast
 from duet_sidecar.tts import speak_text
 from duet_sidecar.voice import extract_embedding, match_speaker
+from duet_sidecar.warmup import warmup_models
 
 
 HANDLERS = {
@@ -50,6 +51,7 @@ HANDLERS = {
     "speak_text": speak_text,              # Piper TTS (on-device text-to-speech)
     "extract_embedding": extract_embedding, # pyannote speaker embedding for voice enrollment
     "match_speaker": match_speaker,        # Cosine-compare voiceprint against diarized speakers
+    "warmup_models": warmup_models,        # Pre-download and cache all models
 }
 
 

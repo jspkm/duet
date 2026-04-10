@@ -36,6 +36,8 @@ interface ProgressEvent {
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [activeRecordingId, setActiveRecordingId] = useState<number | null>(null);
+  const [setupDone, setSetupDone] = useState<boolean | null>(null); // null = checking
+  const [setupStatus, setSetupStatus] = useState("Preparing Duet...");
 
   // Listen for tray menu navigation events
   useEffect(() => {
@@ -45,12 +47,63 @@ function App() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // First launch: route to coach if no voice profile
+  // Listen for warmup progress
   useEffect(() => {
-    invoke<{ embedding_json: string | null }>("get_voice_profile").then((res) => {
-      if (!res.embedding_json) setScreen("coach");
-    }).catch(() => {});
+    const unlisten = listen<string>("sidecar-progress", (event) => {
+      try {
+        const data = JSON.parse(event.payload);
+        if (data.stage && typeof data.stage === "string" && data.stage.length > 3) {
+          setSetupStatus(data.stage);
+        }
+      } catch {}
+    });
+    return () => { unlisten.then((fn) => fn()); };
   }, []);
+
+  // First launch: check if models are cached, run warmup if needed
+  useEffect(() => {
+    (async () => {
+      try {
+        const profileRes = await invoke<{ embedding_json: string | null }>("get_voice_profile");
+        const countRes = await invoke<{ count: number }>("get_coach_session_count");
+
+        // Run warmup in background (fast if models already cached)
+        invoke("warmup_models").then(() => {
+          setSetupDone(true);
+          if (!profileRes.embedding_json && countRes.count === 0) {
+            setScreen("coach");
+          }
+        }).catch(() => setSetupDone(true));
+
+        // If models are likely cached (returning user), don't block
+        if (profileRes.embedding_json || countRes.count > 0) {
+          setSetupDone(true);
+        }
+      } catch {
+        setSetupDone(true);
+      }
+    })();
+  }, []);
+
+  // Show setup screen while models are downloading (first launch only)
+  if (setupDone === null || (setupDone === false)) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--color-bg)" }}>
+        <div style={{ textAlign: "center", maxWidth: 400 }}>
+          <div className="sidebar-logo" style={{ fontSize: 32, marginBottom: "var(--space-lg)" }}>DUET</div>
+          <p style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: "var(--space-md)" }}>
+            {setupStatus}
+          </p>
+          <div style={{ height: 4, background: "var(--color-surface-raised)", borderRadius: 2, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: "100%", background: "var(--color-primary)", borderRadius: 2, animation: "pulse-dot 2s ease-in-out infinite" }} />
+          </div>
+          <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: "var(--space-md)" }}>
+            First launch downloads speech models (~3 GB). This only happens once.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>

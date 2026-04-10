@@ -6,24 +6,27 @@ Record your meetings. Hear where you stumbled. Practice speaking and subject mat
 
 ## How it works
 
-1. **Start a session** before or during a meeting
-2. Duet transcribes and detects disfluencies, then generates coaching for each flagged moment
-3. **Practice drills** play your weak moments back and let you try again
-4. **Upload documents** related to your subject area. Duet uses them as ground truth to coach you toward real expertise, supplemented by related information it finds
-5. **Dashboard** tracks your progress over time
+1. **Meet your coach** — Duet's voice coach introduces itself, learns about you, and captures your voice for speaker recognition. All by voice, no buttons.
+2. **Record sessions** — record meetings or calls. Duet transcribes on-device, identifies your voice, and flags disfluencies (fillers, hedging, long pauses) in your speech only.
+3. **Practice points** — hear your weak moments played back with coaching advice, then record yourself saying it cleanly. Duet evaluates your attempt.
+4. **Talk to Coach** — anytime practice sessions where the coach asks questions, listens for fillers, points them out, and asks you to try again.
+5. **Track progress** — dashboard shows filler improvement vs. your baseline from the first session.
+6. **Upload documents** — subject area material used as ground truth for expertise coaching.
 
 ## Architecture
 
-Tauri v2 desktop app (macOS, Windows planned).
+Tauri v2 desktop app (macOS, Windows planned). Everything runs on-device except coaching text generation (Claude API).
 
 ```
 Tauri (Rust backend)
   ├── SQLite (local storage, everything on-device)
   ├── Sidecar management (Python process)
-  └── Claude API client (coaching)
+  └── Claude API client (coaching, drill evaluation)
 
 Python Sidecar
-  ├── WhisperX (on-device transcription + diarization + word timestamps)
+  ├── WhisperX (on-device transcription, word timestamps, speaker diarization)
+  ├── Piper TTS (on-device coach voice)
+  ├── pyannote (speaker embedding for voice enrollment + matching)
   ├── Document parsing (PDF, Word, text)
   └── Audio clip extraction (ffmpeg)
 
@@ -31,7 +34,7 @@ React + Vite (frontend)
   └── Design system: Deep Teal, Satoshi/DM Sans/JetBrains Mono
 ```
 
-All recordings and documents stay on your device. Transcription runs entirely on-device via Whisper. Only transcript text is sent to Claude for coaching analysis.
+All recordings and documents stay on your device. Transcription and speaker recognition run entirely on-device. Only transcript text is sent to Claude for coaching.
 
 ## Setup
 
@@ -51,8 +54,11 @@ cd sidecar && pip install -e ".[dev]" && cd ..
 # API key (create a .env file)
 echo 'ANTHROPIC_API_KEY=your-key' > .env
 
-# Optional: HuggingFace token for speaker diarization
-# Accept pyannote terms at https://huggingface.co/pyannote/speaker-diarization-3.1
+# HuggingFace token for speaker diarization + voice enrollment
+# Create token at https://huggingface.co/settings/tokens then accept terms at:
+#   https://huggingface.co/pyannote/speaker-diarization-community-1
+#   https://huggingface.co/pyannote/segmentation-3.0
+#   https://huggingface.co/pyannote/embedding
 echo 'HF_TOKEN=your-hf-token' >> .env
 
 # Run (first launch downloads ~3 GB of speech models)

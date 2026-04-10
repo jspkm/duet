@@ -39,6 +39,7 @@ pub fn run() {
             commands::analyze_audio,
             commands::generate_coaching,
             commands::evaluate_drill,
+            commands::warmup_models,
             commands::save_coach_session,
             commands::get_coach_session_count,
             commands::get_latest_coach_session,
