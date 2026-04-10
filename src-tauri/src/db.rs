@@ -233,12 +233,19 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn update_transcript(&self, id: i64, transcript: &str, segments_json: &str) -> Result<()> {
+    pub fn update_transcript(&self, id: i64, transcript: &str, segments_json: &str, duration: Option<f64>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE recordings SET transcript_text = ?1, speaker_segments = ?2 WHERE id = ?3",
-            params![transcript, segments_json, id],
-        )?;
+        if let Some(dur) = duration {
+            conn.execute(
+                "UPDATE recordings SET transcript_text = ?1, speaker_segments = ?2, duration_seconds = ?3 WHERE id = ?4",
+                params![transcript, segments_json, dur, id],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE recordings SET transcript_text = ?1, speaker_segments = ?2 WHERE id = ?3",
+                params![transcript, segments_json, id],
+            )?;
+        }
         Ok(())
     }
 
@@ -337,13 +344,14 @@ impl Database {
         severity: i32,
         coach_type: &str,
         transcript_text: &str,
+        coaching_text: Option<&str>,
     ) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO flagged_moments
-             (analysis_result_id, recording_id, start_time, end_time, moment_type, severity, coach_type, transcript_text)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![analysis_id, recording_id, start_time, end_time, moment_type, severity, coach_type, transcript_text],
+             (analysis_result_id, recording_id, start_time, end_time, moment_type, severity, coach_type, transcript_text, coaching_text)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![analysis_id, recording_id, start_time, end_time, moment_type, severity, coach_type, transcript_text, coaching_text],
         )?;
         Ok(conn.last_insert_rowid())
     }

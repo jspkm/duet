@@ -54,18 +54,28 @@ pub async fn parse_document(
 pub async fn save_recording(
     audio_path: String,
     duration: f64,
+    recording_id: Option<i64>,
     transcript: Option<String>,
     segments_json: Option<String>,
     db: State<'_, Database>,
 ) -> Result<Value, String> {
-    let id = db
-        .insert_recording(&audio_path, duration)
-        .map_err(|e| e.to_string())?;
-
-    if let (Some(t), Some(s)) = (&transcript, &segments_json) {
-        db.update_transcript(id, t, s)
+    let id = if let Some(existing_id) = recording_id {
+        if let (Some(t), Some(s)) = (&transcript, &segments_json) {
+            db.update_transcript(existing_id, t, s, Some(duration))
+                .map_err(|e| e.to_string())?;
+        }
+        existing_id
+    } else {
+        let new_id = db
+            .insert_recording(&audio_path, duration)
             .map_err(|e| e.to_string())?;
-    }
+
+        if let (Some(t), Some(s)) = (&transcript, &segments_json) {
+            db.update_transcript(new_id, t, s, None)
+                .map_err(|e| e.to_string())?;
+        }
+        new_id
+    };
 
     Ok(json!({ "id": id }))
 }
@@ -117,6 +127,7 @@ pub async fn save_analysis(
                 m["severity"].as_i64().unwrap_or(0) as i32,
                 m["coach_type"].as_str().unwrap_or("speech"),
                 m["text"].as_str().unwrap_or(""),
+                m["coaching_text"].as_str(),
             );
         }
     }
@@ -153,6 +164,27 @@ pub async fn generate_coaching(
 }
 
 #[tauri::command]
+pub async fn evaluate_drill(
+    original_text: String,
+    moment_type: String,
+    suggested_delivery: String,
+    attempt_transcript: String,
+    attempt_number: i32,
+    app: AppHandle,
+    sidecar: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    let params = json!({
+        "original_text": original_text,
+        "moment_type": moment_type,
+        "suggested_delivery": suggested_delivery,
+        "attempt_transcript": attempt_transcript,
+        "attempt_number": attempt_number,
+    });
+
+    sidecar.send_command("evaluate_drill", params, &app)
+}
+
+#[tauri::command]
 pub async fn analyze_speech(
     audio_path: String,
     app: AppHandle,
@@ -163,6 +195,25 @@ pub async fn analyze_speech(
     });
 
     sidecar.send_command("analyze_speech", params, &app)
+}
+
+#[tauri::command]
+pub async fn analyze_words(
+    words: Value,
+    segments: Value,
+    duration_seconds: f64,
+    full_text: String,
+    app: AppHandle,
+    sidecar: State<'_, SidecarManager>,
+) -> Result<Value, String> {
+    let params = json!({
+        "words": words,
+        "segments": segments,
+        "duration_seconds": duration_seconds,
+        "full_text": full_text,
+    });
+
+    sidecar.send_command("analyze_words", params, &app)
 }
 
 #[tauri::command]

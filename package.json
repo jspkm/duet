@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "tauri": "cargo tauri"
+    "tauri": "cargo tauri",
+    "duet": "cargo tauri dev"
   },
   "devDependencies": {
     "@types/bun": "latest",

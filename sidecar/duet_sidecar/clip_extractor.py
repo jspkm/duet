@@ -52,9 +52,9 @@ def extract_clips(params: dict, progress_callback: Callable) -> dict:
         end = moment["end"]
         moment_id = moment.get("id", i)
 
-        # Add 0.5s padding on each side for natural listening
-        padded_start = max(0, start - 0.5)
-        padded_end = end + 0.5
+        # Small padding for smooth audio edges (context is already in the moment timestamps)
+        padded_start = max(0, start - 0.25)
+        padded_end = end + 0.25
         duration = padded_end - padded_start
 
         clip_filename = f"clip-{moment_id}.wav"

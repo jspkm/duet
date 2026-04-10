@@ -23,7 +23,7 @@ Tauri (Rust backend)
   └── Claude API client (coaching)
 
 Python Sidecar
-  ├── AssemblyAI (transcription + disfluency detection)
+  ├── WhisperX (on-device transcription + diarization + word timestamps)
   ├── Document parsing (PDF, Word, text)
   └── Audio clip extraction (ffmpeg)
 
@@ -31,7 +31,7 @@ React + Vite (frontend)
   └── Design system: Deep Teal, Satoshi/DM Sans/JetBrains Mono
 ```
 
-All recordings and documents stay on your device. Only transcript text is sent to AI APIs for analysis.
+All recordings and documents stay on your device. Transcription runs entirely on-device via Whisper. Only transcript text is sent to Claude for coaching analysis.
 
 ## Setup
 
@@ -48,15 +48,18 @@ bun install
 # Python sidecar deps
 cd sidecar && pip install -e ".[dev]" && cd ..
 
-# API keys (create a .env file)
-echo 'ASSEMBLYAI_API_KEY=your-key' > .env
-echo 'ANTHROPIC_API_KEY=your-key' >> .env
+# API key (create a .env file)
+echo 'ANTHROPIC_API_KEY=your-key' > .env
 
-# Run
-cargo tauri dev
+# Optional: HuggingFace token for speaker diarization
+# Accept pyannote terms at https://huggingface.co/pyannote/speaker-diarization-3.1
+echo 'HF_TOKEN=your-hf-token' >> .env
+
+# Run (first launch downloads ~3 GB of speech models)
+bun run duet
 ```
 
-Get API keys at [assemblyai.com](https://www.assemblyai.com) and [console.anthropic.com](https://console.anthropic.com).
+Get your API key at [console.anthropic.com](https://console.anthropic.com). Transcription is fully on-device, no API key needed.
 
 ## Design
 
