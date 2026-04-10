@@ -24,6 +24,13 @@ _COMPUTE_TYPE = "int8"
 _WHISPER_MODEL = os.environ.get("DUET_WHISPER_MODEL", "large-v3-turbo")
 _BATCH_SIZE = 8  # conservative for CPU
 
+# Whisper was trained on clean subtitles and drops filler words by default.
+# This initial prompt primes the model to preserve disfluencies (um, uh, like, etc.)
+_DISFLUENCY_PROMPT = (
+    "Um, uh, so like, you know, I mean, sort of, kind of, basically, "
+    "right, right, actually, honestly, uh, um..."
+)
+
 
 def _get_hf_token():
     return os.environ.get("HF_TOKEN") or os.environ.get("DUET_HF_TOKEN") or True
@@ -34,6 +41,7 @@ def _get_whisper_model_fast():
     if "whisper_fast" not in _models:
         _models["whisper_fast"] = whisperx.load_model(
             "base", _DEVICE, compute_type=_COMPUTE_TYPE,
+            asr_options={"initial_prompt": _DISFLUENCY_PROMPT},
         )
     return _models["whisper_fast"]
 
@@ -42,6 +50,7 @@ def _get_whisper_model():
     if "whisper" not in _models:
         _models["whisper"] = whisperx.load_model(
             _WHISPER_MODEL, _DEVICE, compute_type=_COMPUTE_TYPE,
+            asr_options={"initial_prompt": _DISFLUENCY_PROMPT},
         )
     return _models["whisper"]
 
