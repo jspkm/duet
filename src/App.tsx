@@ -47,6 +47,16 @@ function App() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
+  // Listen for in-app navigation (from child components)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const screen = (e as CustomEvent).detail as Screen;
+      if (screen) setScreen(screen);
+    };
+    window.addEventListener("duet-navigate", handler);
+    return () => window.removeEventListener("duet-navigate", handler);
+  }, []);
+
   // Listen for warmup progress
   useEffect(() => {
     const unlisten = listen<string>("sidecar-progress", (event) => {
@@ -3244,58 +3254,29 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   // Done: show First Impression card
   if (state === "done") {
     return (
-      <>
-        <p className="page-label">Coach</p>
-        <h1 className="page-title">{isFirstSession ? "Coach's First Impression" : "Session Summary"}</h1>
-
-        {firstImpression && (
-          <>
-            <div className="card" style={{ marginBottom: "var(--space-md)" }}>
-              <p style={{ fontSize: 15, lineHeight: 1.7, color: "var(--color-text-secondary)" }}>
-                {firstImpression.summary}
-              </p>
-            </div>
-
-            <div className="card" style={{ marginBottom: "var(--space-md)", borderLeft: "3px solid var(--color-primary)", borderRadius: "0 var(--radius-md) var(--radius-md) 0" }}>
-              <p style={{ fontSize: 12, fontWeight: 600, color: "var(--color-primary)", marginBottom: "var(--space-xs)" }}>
-                Priority focus area
-              </p>
-              <p style={{ fontSize: 14, color: "var(--color-text)" }}>
-                {firstImpression.focus_area}
-              </p>
-            </div>
-
-            {firstImpression.strengths.length > 0 && (
-              <div className="card" style={{ marginBottom: "var(--space-md)" }}>
-                <h3 className="settings-heading">What you do well</h3>
-                {firstImpression.strengths.map((s, i) => (
-                  <p key={i} style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: "var(--space-xs)" }}>
-                    {s}
-                  </p>
-                ))}
-              </div>
-            )}
-
-            {firstImpression.patterns.length > 0 && (
-              <div className="card" style={{ marginBottom: "var(--space-md)" }}>
-                <h3 className="settings-heading">Patterns observed</h3>
-                {firstImpression.patterns.map((p, i) => (
-                  <p key={i} style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: "var(--space-xs)" }}>
-                    {p}
-                  </p>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {error && (
-          <div className="card" style={{ marginBottom: "var(--space-md)" }}>
-            <p style={{ fontSize: 13, color: "var(--color-error)" }}>{error}</p>
-          </div>
-        )}
-
-      </>
+      <div style={{ textAlign: "center", padding: "var(--space-2xl) 0" }}>
+        <p style={{ fontSize: 48, marginBottom: "var(--space-lg)" }}>
+          {isFirstSession ? "Welcome aboard." : "Nice work."}
+        </p>
+        <p style={{ fontSize: 16, color: "var(--color-text-secondary)", lineHeight: 1.7, maxWidth: 400, margin: "0 auto var(--space-lg)" }}>
+          {isFirstSession
+            ? "Your coach is getting to know your voice and speech patterns. Your detailed analysis will appear in Sessions shortly."
+            : "Your practice session has been saved. A detailed analysis will appear in Sessions shortly."}
+        </p>
+        <a
+          onClick={() => {
+            // Navigate to Sessions — need to access the parent's setScreen
+            // Use a custom event since we're in a child component
+            window.dispatchEvent(new CustomEvent("duet-navigate", { detail: "recordings" }));
+          }}
+          style={{
+            color: "var(--color-primary)", cursor: "pointer", fontSize: 14, fontWeight: 600,
+            textDecoration: "underline", textUnderlineOffset: 3,
+          }}
+        >
+          Go to Sessions
+        </a>
+      </div>
     );
   }
 
