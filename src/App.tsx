@@ -2725,6 +2725,8 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const silenceStartRef = useRef<number>(0);
+  const noiseFloorRef = useRef<number>(0);
+  const speechDetectedRef = useRef(false);
   const animFrameRef = useRef<number>(0);
   const streamRef = useRef<MediaStream | null>(null);
   const allChunksRef = useRef<Blob[]>([]);
@@ -2890,9 +2892,15 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       turnRecorderRef.current = turnRec;
     }
 
-    // Start silence monitoring
+    // Start silence monitoring with adaptive noise floor
     const analyser = analyserRef.current;
     if (!analyser) return;
+
+    speechDetectedRef.current = false;
+    silenceStartRef.current = 0;
+    // Calibrate noise floor from first few frames
+    let calibrationSamples: number[] = [];
+    const CALIBRATION_FRAMES = 15; // ~0.25 seconds at 60fps
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     const checkSilence = () => {
@@ -2900,18 +2908,42 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       analyserRef.current.getByteFrequencyData(dataArray);
       const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
 
-      const now = Date.now();
-      const turnChunks = turnChunksRef.current.length;
-      if (avg < 8) {
+      // Calibrate noise floor from initial frames
+      if (calibrationSamples.length < CALIBRATION_FRAMES) {
+        calibrationSamples.push(avg);
+        if (calibrationSamples.length === CALIBRATION_FRAMES) {
+          noiseFloorRef.current = Math.max(
+            calibrationSamples.reduce((a, b) => a + b, 0) / calibrationSamples.length,
+            3 // minimum floor
+          );
+        }
+        animFrameRef.current = requestAnimationFrame(checkSilence);
+        return;
+      }
+
+      const noiseFloor = noiseFloorRef.current;
+      // Speech = level significantly above noise floor (2.5x)
+      const isSpeech = avg > noiseFloor * 2.5;
+
+      if (isSpeech) {
+        speechDetectedRef.current = true;
+        silenceStartRef.current = 0;
+      } else if (speechDetectedRef.current) {
+        // User was speaking but level dropped to near noise floor
+        const now = Date.now();
         if (silenceStartRef.current === 0) silenceStartRef.current = now;
         const silenceDuration = (now - silenceStartRef.current) / 1000;
+        const turnChunks = turnChunksRef.current.length;
 
         if (silenceDuration > 3.5 && turnChunks > 2) {
           stopListeningAndProcess();
           return;
         }
-      } else {
-        silenceStartRef.current = 0;
+      }
+
+      // Slowly adapt noise floor (tracks ambient changes)
+      if (!isSpeech && avg > 0) {
+        noiseFloorRef.current = noiseFloor * 0.98 + avg * 0.02;
       }
 
       animFrameRef.current = requestAnimationFrame(checkSilence);
