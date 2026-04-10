@@ -2954,50 +2954,71 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
 
     speechDetectedRef.current = false;
     silenceStartRef.current = 0;
-    // Calibrate noise floor from first few frames
-    let calibrationSamples: number[] = [];
-    const CALIBRATION_FRAMES = 15; // ~0.25 seconds at 60fps
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    // Wait 1.5s before starting detection. This lets the coach's audio
+    // fade from the mic (speaker feedback) so we calibrate on actual ambient noise.
+    const listenStartTime = Date.now();
+    const SETTLE_MS = 1500;
+    let calibrationSamples: number[] = [];
+    const CALIBRATION_FRAMES = 20;
+    let calibrated = false;
+    let speechFrames = 0; // Count consecutive speech frames to avoid false triggers
+
     const checkSilence = () => {
       if (!analyserRef.current) return;
       analyserRef.current.getByteFrequencyData(dataArray);
       const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      const elapsed = Date.now() - listenStartTime;
 
-      // Calibrate noise floor from initial frames
-      if (calibrationSamples.length < CALIBRATION_FRAMES) {
+      // Phase 1: Wait for acoustic environment to settle (coach echo fades)
+      if (elapsed < SETTLE_MS) {
+        animFrameRef.current = requestAnimationFrame(checkSilence);
+        return;
+      }
+
+      // Phase 2: Calibrate noise floor from ambient sound (after settle period)
+      if (!calibrated) {
         calibrationSamples.push(avg);
-        if (calibrationSamples.length === CALIBRATION_FRAMES) {
+        if (calibrationSamples.length >= CALIBRATION_FRAMES) {
           noiseFloorRef.current = Math.max(
             calibrationSamples.reduce((a, b) => a + b, 0) / calibrationSamples.length,
-            3 // minimum floor
+            3,
           );
+          calibrated = true;
         }
         animFrameRef.current = requestAnimationFrame(checkSilence);
         return;
       }
 
+      // Phase 3: Detect speech and silence
       const noiseFloor = noiseFloorRef.current;
-      // Speech = level significantly above noise floor (2.5x)
       const isSpeech = avg > noiseFloor * 2.5;
 
       if (isSpeech) {
-        speechDetectedRef.current = true;
+        speechFrames++;
+        // Require ~0.5s of sustained speech (30 frames) before marking as speaking
+        if (speechFrames > 30) {
+          speechDetectedRef.current = true;
+        }
         silenceStartRef.current = 0;
-      } else if (speechDetectedRef.current) {
-        // User was speaking but level dropped to near noise floor
-        const now = Date.now();
-        if (silenceStartRef.current === 0) silenceStartRef.current = now;
-        const silenceDuration = (now - silenceStartRef.current) / 1000;
-        const turnChunks = turnChunksRef.current.length;
+      } else {
+        speechFrames = 0;
+        if (speechDetectedRef.current) {
+          const now = Date.now();
+          if (silenceStartRef.current === 0) silenceStartRef.current = now;
+          const silenceDuration = (now - silenceStartRef.current) / 1000;
+          const turnChunks = turnChunksRef.current.length;
 
-        if (silenceDuration > 3.5 && turnChunks > 2) {
-          stopListeningAndProcess();
-          return;
+          if (silenceDuration > 4.0 && turnChunks > 3) {
+            stopListeningAndProcess();
+            return;
+          }
         }
       }
 
-      // Slowly adapt noise floor (tracks ambient changes)
+      // Slowly adapt noise floor
       if (!isSpeech && avg > 0) {
         noiseFloorRef.current = noiseFloor * 0.98 + avg * 0.02;
       }
