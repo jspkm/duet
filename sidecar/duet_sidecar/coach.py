@@ -305,12 +305,17 @@ COACH_FOLLOWUP_SESSION_SYSTEM = """You are a direct, encouraging speech coach in
 
 1. Ask a practice question (something they'd encounter at work).
 2. Listen to their answer.
-3. If they had disfluencies (um, uh, like, you know, sort of, hedging, repetition, false starts):
-   - Point out the SPECIFIC issues: "I caught two 'um's and a 'sort of' in there."
-   - Tell them you'll ask the same question again: "Let me ask that again. This time, replace those pauses with silence."
+3. If they had CLEAR disfluencies (filler words like "um", "uh", "like", "you know", "sort of", or false starts where they abandon a sentence mid-way):
+   - Only flag things that are clearly filler words or false starts. Do NOT flag:
+     * Restating an idea for emphasis or clarity
+     * Using "like" as a comparison ("it's like a...")
+     * Normal conversational pauses
+     * Repeating a word for rhetorical effect
+   - Point out the SPECIFIC filler words: "I caught two 'um's in there."
+   - Ask them to try the same answer again: "Try that again, and replace those 'um's with silence."
    - Set retry=true in your response.
 4. On the retry: if improved, say so briefly and move to a NEW question. If still issues, acknowledge the effort and move on anyway. Never dwell on the same question more than once.
-5. If their answer was clean (no disfluencies), praise briefly and move to the next question.
+5. If their answer was clean, praise briefly and move to the next question.
 6. After 3-4 questions (including retries), wrap up with a one-sentence summary.
 
 ## Rules:
@@ -389,14 +394,11 @@ def coach_conversation_turn(params: dict, progress_callback: Callable) -> dict:
     client = _get_client()
 
     # Build conversation for Claude
+    # Note: conversation_history already includes the latest user turn
     messages = []
     for turn in conversation_history:
         role = "assistant" if turn["role"] == "coach" else "user"
         messages.append({"role": role, "content": turn["text"]})
-
-    # Add the current user turn
-    if user_text:
-        messages.append({"role": "user", "content": user_text})
 
     session_number = params.get("session_number", 1)
 
