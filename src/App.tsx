@@ -2731,6 +2731,9 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const turnStartChunkIdx = useRef(0); // Index into allChunksRef where current turn started
   const sessionRecorderRef = useRef<MediaRecorder | null>(null); // Single recorder for whole session
   const sessionStreamRef = useRef<MediaStream | null>(null);
+  const turnRecorderRef = useRef<MediaRecorder | null>(null); // Short-lived recorder per turn
+  const turnChunksRef = useRef<Blob[]>([]);
+  const turnResolveRef = useRef<((blob: Blob) => void) | null>(null);
   const historyRef = useRef<{ role: "coach" | "user"; text: string }[]>([]);
 
   // Check session count and pre-synthesize intro audio
@@ -2821,12 +2824,27 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     analyserRef.current = analyser;
   }, []);
 
-  // Start listening for a turn (mark where this turn's chunks begin, start silence detection)
+  // Start listening for a turn (start a turn recorder + silence detection)
   const startListening = useCallback(async () => {
     setState("listening");
     setStatusText("");
-    turnStartChunkIdx.current = allChunksRef.current.length;
     silenceStartRef.current = 0;
+
+    // Start a separate turn recorder on the same stream for clean per-turn audio
+    const stream = sessionStreamRef.current;
+    if (stream) {
+      const fmt = getRecorderMimeType();
+      const turnRec = fmt.mimeType ? new MediaRecorder(stream, { mimeType: fmt.mimeType }) : new MediaRecorder(stream);
+      turnChunksRef.current = [];
+      turnRec.ondataavailable = (e) => { if (e.data.size > 0) turnChunksRef.current.push(e.data); };
+      turnRec.onstop = () => {
+        const blob = new Blob(turnChunksRef.current, { type: fmt.mimeType || "audio/webm" });
+        turnResolveRef.current?.(blob);
+        turnResolveRef.current = null;
+      };
+      turnRec.start(1000);
+      turnRecorderRef.current = turnRec;
+    }
 
     // Start silence monitoring
     const analyser = analyserRef.current;
@@ -2839,7 +2857,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
 
       const now = Date.now();
-      const turnChunks = allChunksRef.current.length - turnStartChunkIdx.current;
+      const turnChunks = turnChunksRef.current.length;
       if (avg < 8) {
         if (silenceStartRef.current === 0) silenceStartRef.current = now;
         const silenceDuration = (now - silenceStartRef.current) / 1000;
@@ -2857,24 +2875,33 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     animFrameRef.current = requestAnimationFrame(checkSilence);
   }, []);
 
-  // Process the user's speech from current turn (recorder stays running)
+  // Process the user's speech from current turn (session recorder stays running)
   const stopListeningAndProcess = useCallback(async () => {
-    // Stop silence monitoring only (recorder keeps running)
+    // Stop silence monitoring
     cancelAnimationFrame(animFrameRef.current);
 
     setState("processing");
     setStatusText("");
 
-    // Grab this turn's chunks
     try {
-      const turnChunks = allChunksRef.current.slice(turnStartChunkIdx.current);
-      const fmt = getRecorderMimeType();
-      const blob = new Blob(turnChunks, { type: fmt.mimeType || "audio/webm" });
+      // Stop the turn recorder to get a proper self-contained audio blob
+      const blob = await new Promise<Blob>((resolve) => {
+        turnResolveRef.current = resolve;
+        const rec = turnRecorderRef.current;
+        if (rec && rec.state !== "inactive") {
+          rec.stop();
+        } else {
+          resolve(new Blob([]));
+        }
+        turnRecorderRef.current = null;
+      });
+
       if (blob.size < 1000) {
         await startListening();
         return;
       }
 
+      const fmt = getRecorderMimeType();
       const dataDir = await appDataDir();
       const tmpPath = await join(dataDir, "coach", `turn-${Date.now()}.${fmt.ext}`);
       const fs = await import("@tauri-apps/plugin-fs");
