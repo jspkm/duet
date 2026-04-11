@@ -40,6 +40,7 @@ def speak_text(params: dict, progress_callback: Callable) -> dict:
     """
     text = params.get("text", "")
     output_path = params.get("output_path")
+    speed = params.get("speed", 1.0)  # length_scale: <1 = faster, >1 = slower
 
     if not text:
         raise ValueError("text is required")
@@ -50,9 +51,15 @@ def speak_text(params: dict, progress_callback: Callable) -> dict:
 
     voice = _get_voice()
 
+    # Adjust speed within a safe range (0.85 to 1.2)
+    from piper.config import SynthesisConfig
+    syn_config = SynthesisConfig(
+        length_scale=max(0.85, min(1.2, float(speed))),
+    )
+
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with wave.open(output_path, "wb") as wav:
-        voice.synthesize_wav(text, wav)
+        voice.synthesize_wav(text, wav, syn_config=syn_config)
 
     size = os.path.getsize(output_path)
     duration = size / (voice.config.sample_rate * 2)  # 16-bit mono

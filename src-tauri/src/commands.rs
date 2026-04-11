@@ -280,12 +280,14 @@ pub async fn generate_first_impression(
 pub async fn speak_text(
     text: String,
     output_path: String,
+    speed: Option<f64>,
     app: AppHandle,
     sidecar: State<'_, SidecarManager>,
 ) -> Result<Value, String> {
     let params = json!({
         "text": text,
         "output_path": output_path,
+        "speed": speed.unwrap_or(1.0),
     });
     sidecar.send_command("speak_text", params, &app)
 }

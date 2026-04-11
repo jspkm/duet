@@ -2794,6 +2794,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const turnChunksRef = useRef<Blob[]>([]);
   const turnResolveRef = useRef<((blob: Blob) => void) | null>(null);
   const historyRef = useRef<{ role: "coach" | "user"; text: string }[]>([]);
+  const userPaceRef = useRef<number>(140); // User's WPM, default 140 (normal pace)
 
   // Check session count and pre-synthesize intro audio
   useEffect(() => {
@@ -2883,11 +2884,18 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     }
   }, []);
 
-  // Speak text via Piper TTS and play it
+  // Speak text via Piper TTS, adjusted to user's speaking pace
   const coachSpeak = useCallback(async (text: string): Promise<void> => {
     const dataDir = await appDataDir();
     const outputPath = await join(dataDir, "coach", `coach-${Date.now()}.wav`);
-    await invoke("speak_text", { text, outputPath });
+
+    // Map user WPM to coach speed (length_scale).
+    // Normal pace ~130-150 WPM → 1.0. Faster user → slightly faster coach. Slower → slower.
+    // Clamp to 0.88-1.15 range (never too fast or too slow).
+    const userWpm = userPaceRef.current;
+    const speed = Math.max(0.88, Math.min(1.15, 140 / Math.max(userWpm, 80)));
+
+    await invoke("speak_text", { text, outputPath, speed });
     await playCoachAudio(outputPath);
   }, [playCoachAudio]);
 
@@ -3060,8 +3068,17 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       const fs = await import("@tauri-apps/plugin-fs");
       await fs.writeFile(tmpPath, new Uint8Array(await blob.arrayBuffer()));
 
-      const speech = await invoke<{ text: string }>("transcribe_fast", { audioPath: tmpPath });
+      const speech = await invoke<{ text: string; duration_seconds: number }>("transcribe_fast", { audioPath: tmpPath });
       const userText = speech.text.trim();
+
+      // Track user speaking pace for coach speed adjustment
+      if (userText && speech.duration_seconds > 1) {
+        const wordCount = userText.split(/\s+/).length;
+        const wpm = (wordCount / speech.duration_seconds) * 60;
+        if (wpm > 50 && wpm < 300) { // sanity check
+          userPaceRef.current = userPaceRef.current * 0.6 + wpm * 0.4; // smoothed average
+        }
+      }
 
       fs.remove(tmpPath).catch(() => {});
 
