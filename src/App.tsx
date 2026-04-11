@@ -801,10 +801,69 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
     return `${m}:${sec.toString().padStart(2, "0")}`;
   };
 
+  const [viewMode, setViewMode] = useState<"list" | "group">(() =>
+    (localStorage.getItem("duet-sessions-view") as "list" | "group") || "list"
+  );
+  const toggleView = (mode: "list" | "group") => {
+    setViewMode(mode);
+    localStorage.setItem("duet-sessions-view", mode);
+  };
+
+  // Group recordings by session type
+  const groups: { label: string; type: string; items: RecordingEntry[] }[] = [];
+  if (viewMode === "group" && recordings.length > 0) {
+    const typeMap: Record<string, RecordingEntry[]> = {};
+    for (const r of recordings) {
+      const t = r.session_type === "coach_first" ? "coach" : (r.session_type || "recording");
+      (typeMap[t] ??= []).push(r);
+    }
+    const labels: Record<string, string> = { coach: "Coach", recording: "Recording" };
+    for (const [type, items] of Object.entries(typeMap)) {
+      groups.push({ label: labels[type] || type, type, items });
+    }
+    groups.sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["coach", "recording"]));
+  const toggleGroup = (type: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  };
+
   return (
     <>
       <p className="page-label">Sessions</p>
-      <h1 className="page-title">Your sessions</h1>
+      <div style={{ display: "flex", gap: 2, marginBottom: "var(--space-md)" }}>
+          <button
+            onClick={() => toggleView("list")}
+            title="List view"
+            style={{
+              background: viewMode === "list" ? "var(--color-surface-raised)" : "none",
+              border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm) 0 0 var(--radius-sm)",
+              padding: "4px 8px", cursor: "pointer", display: "flex", alignItems: "center",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={viewMode === "list" ? "var(--color-text)" : "var(--color-text-muted)"} strokeWidth="1.5" strokeLinecap="round">
+              <path d="M2 3h12M2 6.5h12M2 10h12M2 13.5h12" />
+            </svg>
+          </button>
+          <button
+            onClick={() => toggleView("group")}
+            title="Group view"
+            style={{
+              background: viewMode === "group" ? "var(--color-surface-raised)" : "none",
+              border: "1px solid var(--color-border)", borderLeft: "none", borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+              padding: "4px 8px", cursor: "pointer", display: "flex", alignItems: "center",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={viewMode === "group" ? "var(--color-text)" : "var(--color-text-muted)"} strokeWidth="1.5" strokeLinecap="round">
+              <path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z" />
+            </svg>
+          </button>
+      </div>
 
       {loading && <p style={{ color: "var(--color-text-muted)" }}>Loading...</p>}
 
@@ -816,13 +875,43 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
         </div>
       )}
 
-      {recordings.map((r) => (
+      {/* Group view */}
+      {viewMode === "group" && groups.map((group) => (
+        <div key={group.type} style={{ marginBottom: "var(--space-md)" }}>
+          <div
+            style={{ display: "flex", alignItems: "center", gap: "var(--space-sm)", cursor: "pointer", padding: "var(--space-xs) 0" }}
+            onClick={() => toggleGroup(group.type)}
+          >
+            <span style={{ color: "var(--color-text-muted)", fontSize: 14, transition: "transform 0.2s", transform: expandedGroups.has(group.type) ? "rotate(90deg)" : "rotate(0deg)" }}>▸</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-secondary)" }}>
+              {group.label}
+            </span>
+            <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>({group.items.length})</span>
+          </div>
+        </div>
+      ))}
+
+      {/* Session cards: shown flat in list view, filtered by expanded group in group view */}
+      {(viewMode === "list" ? recordings : recordings.filter((r) => {
+        const t = r.session_type === "coach_first" ? "coach" : (r.session_type || "recording");
+        return expandedGroups.has(t);
+      })).map((r) => {
+        const isReady = !!r.transcript_text;
+        return (
         <div
           key={r.id}
           className="card"
-          style={{ cursor: "pointer" }}
-          onClick={() => onSelect(r.id)}
+          style={{ cursor: isReady ? "pointer" : "default", position: "relative", opacity: isReady ? 1 : 0.7 }}
+          onClick={() => isReady && onSelect(r.id)}
         >
+          {!isReady && (
+            <div style={{
+              position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
+              background: "rgba(var(--color-bg-rgb, 255,255,255), 0.6)", borderRadius: "var(--radius-md)", zIndex: 2,
+            }}>
+              <p style={{ fontSize: 13, color: "var(--color-text-muted)", fontWeight: 500 }}>Analyzing...</p>
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div onClick={(e) => editingId === r.id && e.stopPropagation()}>
               {editingId === r.id ? (
@@ -924,15 +1013,10 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
                   ))}
                 </select>
               )}
-              {(r.session_type === "coach" || r.session_type === "coach_first") && (
+              {viewMode === "list" && (r.session_type === "coach" || r.session_type === "coach_first") && (
                 <span className="metric" style={{ color: "var(--color-primary)" }}>Coach</span>
               )}
               <span className="metric">{formatDuration(r.duration_seconds)}</span>
-              {r.transcript_text ? (
-                <span className="metric" style={{ color: "var(--color-success)" }}>Analyzed</span>
-              ) : (
-                <span className="metric">Pending</span>
-              )}
               {confirmDeleteId !== r.id && <button
                 onClick={(e) => { e.stopPropagation(); handleDeleteClick(r.id); }}
                 style={{
@@ -960,7 +1044,7 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
             </div>
           )}
         </div>
-      ))}
+      ); })}
     </>
   );
 }
@@ -2045,7 +2129,6 @@ function StudyPlanScreen() {
   return (
     <>
       <p className="page-label">Study Plan</p>
-      <h1 className="page-title">What to study next</h1>
 
       {/* Summary + filter */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-lg)" }}>
@@ -3526,7 +3609,6 @@ function SettingsScreen() {
   return (
     <>
       <p className="page-label">Settings</p>
-      <h1 className="page-title">Settings</h1>
 
       {/* Settings tabs */}
       <div style={{ display: "flex", gap: 0, borderRadius: "var(--radius-md)", overflow: "hidden", border: "1px solid var(--color-border)", marginBottom: "var(--space-lg)" }}>
