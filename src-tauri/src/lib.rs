@@ -88,8 +88,20 @@ pub fn run() {
                 )?;
             }
 
-            // Initialize database
+            // Restore persisted window size
             let data_dir = app.path().app_data_dir().expect("No app data dir");
+            let size_file = data_dir.join("window_size.json");
+            if let Ok(data) = std::fs::read_to_string(&size_file) {
+                if let Ok(size) = serde_json::from_str::<serde_json::Value>(&data) {
+                    if let (Some(w), Some(h)) = (size["width"].as_f64(), size["height"].as_f64()) {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: w, height: h }));
+                        }
+                    }
+                }
+            }
+
+            // Initialize database
             let database = Database::open(&data_dir)
                 .expect("Failed to open database");
             app.manage(database);
@@ -190,11 +202,28 @@ pub fn run() {
 
             Ok(())
         })
-        // Intercept close: hide to tray instead of quitting
+        // Handle window events: persist size on resize, hide on close
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
+                tauri::WindowEvent::Resized(size) => {
+                    if size.width > 0 && size.height > 0 {
+                        if let Ok(data_dir) = window.app_handle().path().app_data_dir() {
+                            let size_json = serde_json::json!({
+                                "width": size.width,
+                                "height": size.height,
+                            });
+                            let _ = std::fs::write(
+                                data_dir.join("window_size.json"),
+                                size_json.to_string(),
+                            );
+                        }
+                    }
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())
