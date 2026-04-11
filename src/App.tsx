@@ -2775,6 +2775,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const [sessionNumber, setSessionNumber] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [introAudioPath, setIntroAudioPath] = useState<string | null>(null);
+  const [waitingNudge, setWaitingNudge] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -2962,12 +2963,14 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
 
     speechDetectedRef.current = false;
     silenceStartRef.current = 0;
+    setWaitingNudge(null);
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
     // Wait 1.5s before starting detection. This lets the coach's audio
     // fade from the mic (speaker feedback) so we calibrate on actual ambient noise.
     const listenStartTime = Date.now();
+    let nudgeShown = false;
     const SETTLE_MS = 1500;
     let calibrationSamples: number[] = [];
     const CALIBRATION_FRAMES = 20;
@@ -3000,15 +3003,22 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
         return;
       }
 
+      // Show gentle nudge if user hasn't started speaking after 6s
+      if (!speechDetectedRef.current && !nudgeShown && elapsed > SETTLE_MS + 6000) {
+        nudgeShown = true;
+        const nudges = ["Take your time.", "Whenever you're ready.", "No rush."];
+        setWaitingNudge(nudges[Math.floor(Math.random() * nudges.length)]!);
+      }
+
       // Phase 3: Detect speech and silence
       const noiseFloor = noiseFloorRef.current;
       const isSpeech = avg > noiseFloor * 2.5;
 
       if (isSpeech) {
         speechFrames++;
-        // Require ~0.5s of sustained speech (30 frames) before marking as speaking
         if (speechFrames > 30) {
           speechDetectedRef.current = true;
+          if (waitingNudge) setWaitingNudge(null);
         }
         silenceStartRef.current = 0;
       } else {
@@ -3475,7 +3485,9 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
             {state === "listening" && (
               <div>
                 <div className="recording-pulse" />
-                <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>Listening...</p>
+                <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
+                  {waitingNudge || "Listening..."}
+                </p>
               </div>
             )}
             {(state === "processing" || state === "analyzing") && (
