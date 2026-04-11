@@ -875,9 +875,9 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
         </div>
       )}
 
-      {/* Group view */}
+      {/* Group view: headers with their cards nested inside */}
       {viewMode === "group" && groups.map((group) => (
-        <div key={group.type} style={{ marginBottom: "var(--space-md)" }}>
+        <div key={group.type} style={{ marginBottom: "var(--space-sm)" }}>
           <div
             style={{ display: "flex", alignItems: "center", gap: "var(--space-sm)", cursor: "pointer", padding: "var(--space-xs) 0" }}
             onClick={() => toggleGroup(group.type)}
@@ -888,14 +888,61 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
             </span>
             <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>({group.items.length})</span>
           </div>
+          {expandedGroups.has(group.type) && group.items.map((r) => {
+            const isReady = !!r.transcript_text;
+            return (
+              <div
+                key={r.id}
+                className="card"
+                style={{ cursor: isReady ? "pointer" : "default", position: "relative", opacity: isReady ? 1 : 0.7, marginBottom: "var(--space-xs)" }}
+                onClick={() => isReady && onSelect(r.id)}
+              >
+                {!isReady && (
+                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(var(--color-bg-rgb, 255,255,255), 0.6)", borderRadius: "var(--radius-md)", zIndex: 2 }}>
+                    <p style={{ fontSize: 13, color: "var(--color-text-muted)", fontWeight: 500 }}>Analyzing...</p>
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 15 }}>
+                      {r.name || `Session #${r.id}`}
+                    </p>
+                    <p style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+                      {new Date(r.recorded_at.endsWith("Z") ? r.recorded_at : r.recorded_at + "Z").toLocaleDateString()} at{" "}
+                      {new Date(r.recorded_at.endsWith("Z") ? r.recorded_at : r.recorded_at + "Z").toLocaleTimeString()}
+                    </p>
+                    {r.transcript_text && (
+                      <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.transcript_text.replace(/^\[Coach\]\s*/m, "").split("\n")[0]?.slice(0, 100)}
+                      </p>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                    {r.duration_seconds > 0 && <span className="metric">{formatDuration(r.duration_seconds)}</span>}
+                    {confirmDeleteId !== r.id && <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteClick(r.id); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: "var(--space-xs)", borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center" }}
+                      title="Delete session"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#C94040" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4M6.67 7.33v4M9.33 7.33v4M3.33 4l.67 9.33a1.33 1.33 0 001.33 1.34h5.34a1.33 1.33 0 001.33-1.34L12.67 4" />
+                      </svg>
+                    </button>}
+                  </div>
+                </div>
+                {confirmDeleteId === r.id && (
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <DeleteConfirmation onConfirm={handleConfirmDelete} onCancel={() => setConfirmDeleteId(null)} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       ))}
 
-      {/* Session cards: shown flat in list view, filtered by expanded group in group view */}
-      {(viewMode === "list" ? recordings : recordings.filter((r) => {
-        const t = r.session_type === "coach_first" ? "coach" : (r.session_type || "recording");
-        return expandedGroups.has(t);
-      })).map((r) => {
+      {/* List view: flat list */}
+      {viewMode === "list" && recordings.map((r) => {
         const isReady = !!r.transcript_text;
         return (
         <div
@@ -987,8 +1034,13 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
                 {new Date(r.recorded_at.endsWith("Z") ? r.recorded_at : r.recorded_at + "Z").toLocaleDateString()} at{" "}
                 {new Date(r.recorded_at.endsWith("Z") ? r.recorded_at : r.recorded_at + "Z").toLocaleTimeString()}
               </p>
+              {r.transcript_text && (
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 400 }}>
+                  {r.transcript_text.replace(/^\[Coach\]\s*/m, "").split("\n")[0]?.slice(0, 100)}
+                </p>
+              )}
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
               {subjects.length > 0 && (
                 <select
                   style={{
@@ -1016,7 +1068,7 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
               {viewMode === "list" && (r.session_type === "coach" || r.session_type === "coach_first") && (
                 <span className="metric" style={{ color: "var(--color-primary)" }}>Coach</span>
               )}
-              <span className="metric">{formatDuration(r.duration_seconds)}</span>
+              {r.duration_seconds > 0 && <span className="metric">{formatDuration(r.duration_seconds)}</span>}
               {confirmDeleteId !== r.id && <button
                 onClick={(e) => { e.stopPropagation(); handleDeleteClick(r.id); }}
                 style={{
