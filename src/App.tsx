@@ -1110,6 +1110,8 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
   const [transcriptExpanded, setTranscriptExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [userName, setUserName] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [editName, setEditName] = useState("");
   const [firstImpression, setFirstImpression] = useState<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] } | null>(null);
 
   useEffect(() => {
@@ -1173,11 +1175,52 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
         ← Sessions
       </button>
 
-      <p className="page-label">Session #{recording.id}</p>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-xs)" }}>
-        <h1 className="page-title" style={{ margin: 0 }}>
-          {date.toLocaleDateString()} at {date.toLocaleTimeString()}
-        </h1>
+        <div>
+          {editingName ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-xs)", marginBottom: 2 }}>
+              <input
+                style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 16, padding: "var(--space-2xs) var(--space-xs)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", background: "var(--color-surface)", color: "var(--color-text)", width: 250 }}
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === "Enter" && editName.trim()) {
+                    await invoke("rename_recording", { recordingId: recording.id, name: editName.trim() });
+                    recording.name = editName.trim();
+                    setEditingName(false);
+                  }
+                  if (e.key === "Escape") setEditingName(false);
+                }}
+                autoFocus
+              />
+              <button onClick={async () => { if (editName.trim()) { await invoke("rename_recording", { recordingId: recording.id, name: editName.trim() }); recording.name = editName.trim(); } setEditingName(false); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "var(--space-2xs)", display: "flex" }} title="Save">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.5 3.5L13 4" /></svg>
+              </button>
+              <button onClick={() => setEditingName(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: "var(--space-2xs)", display: "flex" }} title="Cancel">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--color-text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-xs)", marginBottom: 2 }}>
+              <p style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 16 }}>
+                {recording.name || `Session #${recording.id}`}
+              </p>
+              <button
+                onClick={() => { setEditName(recording.name || `Session #${recording.id}`); setEditingName(true); }}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: "var(--space-2xs)", display: "flex", alignItems: "center", opacity: 0.4 }}
+                title="Rename"
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--color-text-muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11.33 1.33a1.89 1.89 0 012.67 2.67L5 13l-3.67 1L2.33 10.33z" />
+                </svg>
+              </button>
+            </div>
+          )}
+          <p style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+            {recording.duration_seconds > 0 && <>{formatDuration(recording.duration_seconds)} · </>}
+            {date.toLocaleDateString()} at {date.toLocaleTimeString()}
+          </p>
+        </div>
         {!confirmDelete ? (
           <button
             style={{
@@ -1211,9 +1254,76 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
         <span className="metric">{moments.length} flagged moments</span>
       </div>
 
-      {/* Session playback */}
+      {/* Session playback + transcript */}
       <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
         <AudioPlayer clipPath={recording.local_audio_path} />
+        {recording.transcript_text && (
+          <>
+            <div
+              style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer",
+                position: transcriptExpanded ? "sticky" : "static",
+                top: 0, zIndex: 10,
+                background: "var(--color-surface)",
+                padding: "var(--space-sm) 0",
+                marginTop: "var(--space-md)",
+                borderTop: "1px solid var(--color-border)",
+                borderBottom: transcriptExpanded ? "1px solid var(--color-border)" : "none",
+              }}
+              onClick={() => setTranscriptExpanded(!transcriptExpanded)}
+            >
+              <h3 className="settings-heading" style={{ margin: 0 }}>Transcript</h3>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 16, transition: "transform 0.2s", transform: transcriptExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>
+                ▾
+              </span>
+            </div>
+            <div style={{ position: "relative", maxHeight: transcriptExpanded ? "none" : 140, overflow: "hidden" }}>
+              {(() => {
+                let segments: { start: number; end: number; text: string; speaker: string | null }[] = [];
+                try {
+                  if (recording.speaker_segments) {
+                    segments = JSON.parse(recording.speaker_segments);
+                  }
+                } catch {}
+
+                const speakers = new Set(segments.map((s) => s.speaker).filter(Boolean));
+                if (speakers.size > 1) {
+                  const speakerColors: Record<string, string> = {};
+                  const palette = ["var(--color-primary)", "var(--color-warning)", "#8B5CF6", "#EC4899"];
+                  let colorIdx = 0;
+                  const mySpeaker = localStorage.getItem("duet-my-speaker");
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
+                      {segments.map((seg, i) => {
+                        const spk = seg.speaker || "?";
+                        if (!speakerColors[spk]) { speakerColors[spk] = palette[colorIdx % palette.length]!; colorIdx++; }
+                        const isMe = spk === mySpeaker;
+                        return (
+                          <div key={i} style={{ display: "flex", gap: "var(--space-sm)", alignItems: "flex-start" }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: speakerColors[spk], minWidth: 50, paddingTop: 2, flexShrink: 0, fontFamily: "var(--font-mono)" }}>
+                              {isMe ? (userName || "You") : spk}
+                            </span>
+                            <p style={{ fontSize: 14, color: isMe ? "var(--color-text)" : "var(--color-text-secondary)", lineHeight: 1.6, fontWeight: isMe ? 500 : 400, margin: 0 }}>
+                              {seg.text}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                }
+                return (
+                  <p style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                    {recording.transcript_text}
+                  </p>
+                );
+              })()}
+              {!transcriptExpanded && (
+                <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 50, background: "linear-gradient(transparent, var(--color-surface))", pointerEvents: "none" }} />
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Coach's First Impression (for coach sessions) */}
@@ -1257,90 +1367,6 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
         </>
       )}
 
-      {/* Transcript */}
-      {recording.transcript_text && (
-        <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
-          <div
-            style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer",
-              position: transcriptExpanded ? "sticky" : "static",
-              top: 0, zIndex: 10,
-              background: "var(--color-surface)",
-              padding: "var(--space-sm) 0",
-              margin: "calc(-1 * var(--space-sm)) 0 0 0",
-              borderBottom: transcriptExpanded ? "1px solid var(--color-border)" : "none",
-            }}
-            onClick={() => setTranscriptExpanded(!transcriptExpanded)}
-          >
-            <h3 className="settings-heading" style={{ margin: 0 }}>Transcript</h3>
-            <span style={{ color: "var(--color-text-muted)", fontSize: 16, transition: "transform 0.2s", transform: transcriptExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>
-              ▾
-            </span>
-          </div>
-          <div style={{ position: "relative", marginTop: "var(--space-md)", maxHeight: transcriptExpanded ? "none" : 140, overflow: "hidden" }}>
-            {(() => {
-              let segments: { start: number; end: number; text: string; speaker: string | null }[] = [];
-              try {
-                if (recording.speaker_segments) {
-                  segments = JSON.parse(recording.speaker_segments);
-                }
-              } catch {}
-
-              const speakers = new Set(segments.map((s) => s.speaker).filter(Boolean));
-              if (speakers.size > 1) {
-                const speakerColors: Record<string, string> = {};
-                const palette = ["var(--color-primary)", "var(--color-warning)", "#8B5CF6", "#EC4899"];
-                let colorIdx = 0;
-                const mySpeaker = localStorage.getItem("duet-my-speaker");
-
-                return (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
-                    {segments.map((seg, i) => {
-                      const spk = seg.speaker || "?";
-                      if (!speakerColors[spk]) {
-                        speakerColors[spk] = palette[colorIdx % palette.length]!;
-                        colorIdx++;
-                      }
-                      const isMe = spk === mySpeaker;
-                      return (
-                        <div key={i} style={{ display: "flex", gap: "var(--space-sm)", alignItems: "flex-start" }}>
-                          <span style={{
-                            fontSize: 11, fontWeight: 700, color: speakerColors[spk],
-                            minWidth: 50, paddingTop: 2, flexShrink: 0,
-                            fontFamily: "var(--font-mono)",
-                          }}>
-                            {isMe ? (userName || "You") : spk}
-                          </span>
-                          <p style={{
-                            fontSize: 14, color: isMe ? "var(--color-text)" : "var(--color-text-secondary)",
-                            lineHeight: 1.6, fontWeight: isMe ? 500 : 400, margin: 0,
-                          }}>
-                            {seg.text}
-                          </p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              }
-
-              return (
-                <p style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-                  {recording.transcript_text}
-                </p>
-              );
-            })()}
-            {/* Fade overlay when collapsed */}
-            {!transcriptExpanded && (
-              <div style={{
-                position: "absolute", bottom: 0, left: 0, right: 0, height: 50,
-                background: "linear-gradient(transparent, var(--color-surface))",
-                pointerEvents: "none",
-              }} />
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Practice Points */}
       <h3 className="settings-heading" style={{ marginBottom: "var(--space-md)" }}>
@@ -2921,7 +2947,8 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const turnChunksRef = useRef<Blob[]>([]);
   const turnResolveRef = useRef<((blob: Blob) => void) | null>(null);
   const historyRef = useRef<{ role: "coach" | "user"; text: string }[]>([]);
-  const userPaceRef = useRef<number>(140); // User's WPM, default 140 (normal pace)
+  const userPaceRef = useRef<number>(140);
+  const sessionStartTimeRef = useRef<number>(0);
 
   // Check session count and pre-synthesize intro audio
   useEffect(() => {
@@ -3322,8 +3349,9 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       const sessionType = isFirstSession ? "coach_first" : "coach";
       const fullText = historyRef.current.map((h) => `[${h.role === "coach" ? "Coach" : (userName || "You")}] ${h.text}`).join("\n");
 
+      const sessionDuration = Math.round((Date.now() - sessionStartTimeRef.current) / 1000);
       const saveResult = await invoke<{ id: number }>("save_recording", {
-        audioPath: fullPath, duration: 0, sessionType,
+        audioPath: fullPath, duration: sessionDuration, sessionType,
         transcript: fullText, segmentsJson: JSON.stringify([]),
       });
       const recordingId = saveResult.id;
@@ -3464,6 +3492,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     try {
       // Start the session-wide recorder (runs continuously)
       await startSessionRecorder();
+      sessionStartTimeRef.current = Date.now();
       // First session or first exercise: play intro. After that: skip straight to question.
       const hasIntro = isFirstSession || sessionNumber <= 1;
 

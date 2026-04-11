@@ -64,6 +64,13 @@ pub async fn save_recording(
         if let (Some(t), Some(s)) = (&transcript, &segments_json) {
             db.update_transcript(existing_id, t, s, Some(duration))
                 .map_err(|e| e.to_string())?;
+        } else if duration > 0.0 {
+            // Update duration even without transcript (e.g., background analysis)
+            let conn = db.conn().map_err(|e| e.to_string())?;
+            conn.execute(
+                "UPDATE recordings SET duration_seconds = ?1 WHERE id = ?2",
+                rusqlite::params![duration, existing_id],
+            ).map_err(|e| e.to_string())?;
         }
         existing_id
     } else {
