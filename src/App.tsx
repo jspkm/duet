@@ -908,6 +908,7 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
                       {r.name || `Session #${r.id}`}
                     </p>
                     <p style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+                      {r.duration_seconds > 0 && <>{formatDuration(r.duration_seconds)} · </>}
                       {new Date(r.recorded_at.endsWith("Z") ? r.recorded_at : r.recorded_at + "Z").toLocaleDateString()} at{" "}
                       {new Date(r.recorded_at.endsWith("Z") ? r.recorded_at : r.recorded_at + "Z").toLocaleTimeString()}
                     </p>
@@ -918,7 +919,6 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
                     )}
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
-                    {r.duration_seconds > 0 && <span className="metric">{formatDuration(r.duration_seconds)}</span>}
                     {confirmDeleteId !== r.id && <button
                       onClick={(e) => { e.stopPropagation(); handleDeleteClick(r.id); }}
                       style={{ background: "none", border: "none", cursor: "pointer", padding: "var(--space-xs)", borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -1031,6 +1031,7 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
                 </div>
               )}
               <p style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+                {r.duration_seconds > 0 && <>{formatDuration(r.duration_seconds)} · </>}
                 {new Date(r.recorded_at.endsWith("Z") ? r.recorded_at : r.recorded_at + "Z").toLocaleDateString()} at{" "}
                 {new Date(r.recorded_at.endsWith("Z") ? r.recorded_at : r.recorded_at + "Z").toLocaleTimeString()}
               </p>
@@ -1068,7 +1069,6 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
               {viewMode === "list" && (r.session_type === "coach" || r.session_type === "coach_first") && (
                 <span className="metric" style={{ color: "var(--color-primary)" }}>Coach</span>
               )}
-              {r.duration_seconds > 0 && <span className="metric">{formatDuration(r.duration_seconds)}</span>}
               {confirmDeleteId !== r.id && <button
                 onClick={(e) => { e.stopPropagation(); handleDeleteClick(r.id); }}
                 style={{
@@ -1208,16 +1208,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
 
       {/* Session summary */}
       <div style={{ display: "flex", gap: "var(--space-sm)", marginBottom: "var(--space-md)", flexWrap: "wrap" }}>
-        <span className="metric">{formatDuration(recording.duration_seconds)}</span>
         <span className="metric">{moments.length} flagged moments</span>
-        {recording.transcript_text && (
-          <span className="metric" style={{ color: "var(--color-success)" }}>Analyzed</span>
-        )}
-        {localStorage.getItem("duet-speaker-mode") !== "all" && localStorage.getItem("duet-my-speaker") && (
-          <span className="metric" style={{ color: "var(--color-text-muted)" }}>
-            Coaching: {userName || "You"}
-          </span>
-        )}
       </div>
 
       {/* Session playback */}
