@@ -243,6 +243,28 @@ function DeleteConfirmation({ onConfirm, onCancel }: { onConfirm: () => void; on
 
 // Pick a MIME type that both MediaRecorder and the webview can play back.
 // WKWebView (macOS) doesn't support WebM. Prefer mp4/aac, fall back to webm.
+// Voice-band frequency bins. At 48kHz sample rate with fftSize=512, each bin
+// spans ~94Hz. Bins 1-60 cover ~90Hz-5.6kHz, which captures voice fundamentals,
+// harmonics, and most consonant energy. Averaging the full spectrum dilutes
+// speech signal with high-frequency room noise.
+const VOICE_BIN_START = 1;
+const VOICE_BIN_END = 60;
+
+// Compute the voice-band average from an analyser's byte frequency data.
+function voiceBandAvg(analyser: AnalyserNode, dataArray: Uint8Array): number {
+  analyser.getByteFrequencyData(dataArray);
+  const end = Math.min(VOICE_BIN_END, dataArray.length);
+  let sum = 0;
+  for (let i = VOICE_BIN_START; i < end; i++) sum += dataArray[i]!;
+  return sum / (end - VOICE_BIN_START);
+}
+
+// Speech threshold: sensitive in quiet rooms (1.5x multiplier) but also robust
+// in noisier rooms via the additive floor guard (+2 on the raw 0-255 scale).
+function speechThreshold(floor: number): number {
+  return Math.max(floor * 1.5, floor + 2);
+}
+
 // Split text into sentences, keeping end punctuation. Used to pipeline TTS so
 // we can start playing the first sentence while later ones are still synthesizing.
 function splitSentences(text: string): string[] {
@@ -3119,30 +3141,86 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     const userWpm = userPaceRef.current;
     const speed = Math.max(0.88, Math.min(1.15, 140 / Math.max(userWpm, 80)));
 
-    const synth = async (chunk: string): Promise<string> => {
+    const sentences = splitSentences(text);
+    if (sentences.length === 0) return;
+
+    const audioCtx = audioContextRef.current;
+    const mixedDest = mixedDestRef.current;
+
+    // Fallback path: no AudioContext available (e.g. session not started).
+    // Use sequential file playback — less smooth but functional.
+    if (!audioCtx || audioCtx.state === "closed") {
+      const synth = async (chunk: string): Promise<string> => {
+        const outputPath = await join(
+          dataDir,
+          "coach",
+          `coach-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.wav`,
+        );
+        await invoke("speak_text", { text: chunk, outputPath, speed });
+        return outputPath;
+      };
+      let nextSynth = synth(sentences[0]);
+      let accum = "";
+      for (let i = 0; i < sentences.length; i++) {
+        const path = await nextSynth;
+        if (i + 1 < sentences.length) nextSynth = synth(sentences[i + 1]);
+        accum = accum ? `${accum} ${sentences[i]}` : sentences[i];
+        onSentenceStart?.(accum);
+        await playCoachAudio(path);
+      }
+      return;
+    }
+
+    // Fast path: synth + decode in parallel, schedule buffers back-to-back on
+    // the AudioContext timeline so sentences chain seamlessly with no gap.
+    const synthAndDecode = async (chunk: string): Promise<AudioBuffer> => {
       const outputPath = await join(
         dataDir,
         "coach",
         `coach-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.wav`,
       );
       await invoke("speak_text", { text: chunk, outputPath, speed });
-      return outputPath;
+      const src = convertFileSrc(outputPath);
+      const resp = await fetch(src);
+      const arrayBuffer = await resp.arrayBuffer();
+      return await audioCtx.decodeAudioData(arrayBuffer);
     };
 
-    const sentences = splitSentences(text);
-    if (sentences.length === 0) return;
-
-    let nextSynth = synth(sentences[0]);
+    let nextBufferP = synthAndDecode(sentences[0]);
     let accumulated = "";
+    // Small offset so the first scheduled start is slightly in the future and
+    // not clipped by scheduling latency.
+    let nextStartTime = audioCtx.currentTime + 0.02;
+    let lastSource: AudioBufferSourceNode | null = null;
 
     for (let i = 0; i < sentences.length; i++) {
-      const audioPath = await nextSynth;
+      const buffer = await nextBufferP;
       if (i + 1 < sentences.length) {
-        nextSynth = synth(sentences[i + 1]);
+        nextBufferP = synthAndDecode(sentences[i + 1]);
       }
       accumulated = accumulated ? `${accumulated} ${sentences[i]}` : sentences[i];
-      onSentenceStart?.(accumulated);
-      await playCoachAudio(audioPath);
+
+      // If decoding took longer than remaining scheduled audio, reset to now
+      // so we don't start scheduling in the past.
+      const startTime = Math.max(audioCtx.currentTime, nextStartTime);
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      if (mixedDest) source.connect(mixedDest);
+      source.start(startTime);
+      nextStartTime = startTime + buffer.duration;
+      lastSource = source;
+
+      // Reveal the sentence's text exactly when its audio actually begins.
+      const revealDelayMs = Math.max(0, (startTime - audioCtx.currentTime) * 1000);
+      const sentenceText = accumulated;
+      setTimeout(() => onSentenceStart?.(sentenceText), revealDelayMs);
+    }
+
+    if (lastSource) {
+      await new Promise<void>((resolve) => {
+        lastSource!.onended = () => resolve();
+      });
     }
   }, [playCoachAudio]);
 
@@ -3198,6 +3276,29 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     };
     recorder.start(1000);
     sessionRecorderRef.current = recorder;
+
+    // Calibrate the noise floor once, right now, while the room is guaranteed
+    // quiet — no coach audio has played yet. We reuse this floor for every turn
+    // and avoid per-turn calibration (which was contaminated by coach echo).
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const samples: number[] = [];
+    const CALIB_MS = 600;
+    const start = Date.now();
+    await new Promise<void>((resolve) => {
+      const tick = () => {
+        if (Date.now() - start >= CALIB_MS) {
+          resolve();
+          return;
+        }
+        samples.push(voiceBandAvg(analyser, data));
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    const mean = samples.length
+      ? samples.reduce((a, b) => a + b, 0) / samples.length
+      : 2;
+    noiseFloorRef.current = Math.max(mean, 2);
   }, []);
 
   // Start listening for a turn (start a turn recorder + silence detection)
@@ -3232,38 +3333,33 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-    // Wait 1.5s before starting detection. This lets the coach's audio
-    // fade from the mic (speaker feedback) so we calibrate on actual ambient noise.
+    // Short settle window lets any tail of coach audio decay before we start
+    // watching for speech. We don't recalibrate the floor per turn — it was set
+    // once at session start in a guaranteed-quiet window.
     const listenStartTime = Date.now();
     let nudgeShown = false;
-    const SETTLE_MS = 1500;
-    let calibrationSamples: number[] = [];
-    const CALIBRATION_FRAMES = 20;
-    let calibrated = false;
-    let speechFrames = 0; // Count consecutive speech frames to avoid false triggers
+    const SETTLE_MS = 300;
+    let totalSpeechFrames = 0;
+    const SPEECH_ARM_FRAMES = 8; // ~135ms of cumulative speech to arm detection
+    let consecSpeechFrames = 0;
+    const RESUME_SPEECH_FRAMES = 5; // ~80ms of continuous speech to count as resumed
+    const SILENCE_END_S = 1.8;
+    // Hard fallback: if a turn runs this long after speech is detected, force
+    // end it. Prevents a hang if ambient noise masks the end-of-speech silence.
+    const MAX_TURN_AFTER_SPEECH_S = 45;
+    let speechStartTime = 0;
+    // Peak speech volume (slow decay) — lets us detect end-of-speech as a
+    // relative drop from the user's own voice level, which is robust to rising
+    // background noise that would otherwise sit above the absolute threshold.
+    let peakAvg = 0;
 
     const checkSilence = () => {
       if (!analyserRef.current) return;
-      analyserRef.current.getByteFrequencyData(dataArray);
-      const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      const avg = voiceBandAvg(analyserRef.current, dataArray);
       const elapsed = Date.now() - listenStartTime;
 
-      // Phase 1: Wait for acoustic environment to settle (coach echo fades)
+      // Wait for any lingering coach audio to decay before acting on samples.
       if (elapsed < SETTLE_MS) {
-        animFrameRef.current = requestAnimationFrame(checkSilence);
-        return;
-      }
-
-      // Phase 2: Calibrate noise floor from ambient sound (after settle period)
-      if (!calibrated) {
-        calibrationSamples.push(avg);
-        if (calibrationSamples.length >= CALIBRATION_FRAMES) {
-          noiseFloorRef.current = Math.max(
-            calibrationSamples.reduce((a, b) => a + b, 0) / calibrationSamples.length,
-            3,
-          );
-          calibrated = true;
-        }
         animFrameRef.current = requestAnimationFrame(checkSilence);
         return;
       }
@@ -3275,34 +3371,63 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
         setWaitingNudge(nudges[Math.floor(Math.random() * nudges.length)]!);
       }
 
-      // Phase 3: Detect speech and silence
       const noiseFloor = noiseFloorRef.current;
-      const isSpeech = avg > noiseFloor * 2.5;
+      // Combine absolute threshold (floor × 1.5, min floor+2) with a relative
+      // threshold (30% of peak speech volume). Once the user has spoken loudly,
+      // the relative threshold dominates and we can detect silence even if
+      // ambient noise rises above the absolute threshold mid-session.
+      const absThreshold = speechThreshold(noiseFloor);
+      const relThreshold = peakAvg * 0.2;
+      const threshold = Math.max(absThreshold, relThreshold);
+      const isSpeech = avg > threshold;
+
+      // Track peak speech volume with slow decay so a single loud frame
+      // doesn't pin the relative threshold high forever.
+      if (avg > peakAvg) peakAvg = avg;
+      else peakAvg = peakAvg * 0.9995;
+
+      // Hard fallback: force end if the turn has run very long after speech.
+      if (
+        speechDetectedRef.current &&
+        speechStartTime > 0 &&
+        (Date.now() - speechStartTime) / 1000 > MAX_TURN_AFTER_SPEECH_S
+      ) {
+        stopListeningAndProcess();
+        return;
+      }
 
       if (isSpeech) {
-        speechFrames++;
-        if (speechFrames > 30) {
+        totalSpeechFrames++;
+        consecSpeechFrames++;
+        if (totalSpeechFrames >= SPEECH_ARM_FRAMES && !speechDetectedRef.current) {
           speechDetectedRef.current = true;
+          speechStartTime = Date.now();
           if (waitingNudge) setWaitingNudge(null);
         }
-        silenceStartRef.current = 0;
+        // Only reset the silence timer once we have enough consecutive speech
+        // to be confident it's actual speech, not a cough or a key click.
+        if (consecSpeechFrames >= RESUME_SPEECH_FRAMES) {
+          silenceStartRef.current = 0;
+        }
       } else {
-        speechFrames = 0;
+        consecSpeechFrames = 0;
         if (speechDetectedRef.current) {
           const now = Date.now();
           if (silenceStartRef.current === 0) silenceStartRef.current = now;
           const silenceDuration = (now - silenceStartRef.current) / 1000;
           const turnChunks = turnChunksRef.current.length;
 
-          if (silenceDuration > 4.0 && turnChunks > 3) {
+          if (silenceDuration > SILENCE_END_S && turnChunks > 3) {
             stopListeningAndProcess();
             return;
           }
         }
       }
 
-      // Slowly adapt noise floor
-      if (!isSpeech && avg > 0) {
+      // Freeze noise-floor adaptation once the user has started speaking.
+      // Otherwise the floor drifts up during pauses between words and later
+      // words fall below the threshold.
+      if (!isSpeech && !speechDetectedRef.current && avg > 0) {
         noiseFloorRef.current = noiseFloor * 0.98 + avg * 0.02;
       }
 
