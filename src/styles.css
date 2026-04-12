@@ -21,6 +21,7 @@
   --font-display: "Satoshi", system-ui, sans-serif;
   --font-body: "DM Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
+  --font-transcript: "DM Sans", system-ui, sans-serif;
 
   /* Spacing */
   --space-2xs: 2px;
@@ -81,6 +82,7 @@ body {
   font-family: var(--font-body);
   font-size: 16px;
   line-height: 1.5;
+  zoom: 1.1;
   color: var(--color-text);
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;

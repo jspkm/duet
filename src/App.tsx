@@ -39,6 +39,18 @@ function App() {
   const [setupDone, setSetupDone] = useState<boolean | null>(null); // null = checking
   const [setupStatus, setSetupStatus] = useState("Preparing Duet...");
 
+  // Apply saved transcript typography on load
+  useEffect(() => {
+    const typo = localStorage.getItem("duet-typography") || "default";
+    const fonts: Record<string, string> = {
+      default: '"DM Sans", system-ui, sans-serif',
+      classic: 'Georgia, "Times New Roman", serif',
+      modern: '"Inter", "Helvetica Neue", system-ui, sans-serif',
+      mono: '"JetBrains Mono", "SF Mono", monospace',
+    };
+    document.documentElement.style.setProperty("--font-transcript", fonts[typo] || fonts.default!);
+  }, []);
+
   // Listen for tray menu navigation events
   useEffect(() => {
     const unlisten = listen<string>("navigate", (event) => {
@@ -118,7 +130,6 @@ function App() {
   return (
     <div>
       <nav className="sidebar">
-        <div className="sidebar-logo">DUET</div>
         <div className="sidebar-nav">
           {([
             ["dashboard", "Dashboard"],
@@ -1303,7 +1314,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
                             <span style={{ fontSize: 11, fontWeight: 700, color: speakerColors[spk], minWidth: 50, paddingTop: 2, flexShrink: 0, fontFamily: "var(--font-mono)" }}>
                               {isMe ? (userName || "You") : spk}
                             </span>
-                            <p style={{ fontSize: 14, color: isMe ? "var(--color-text)" : "var(--color-text-secondary)", lineHeight: 1.6, fontWeight: isMe ? 500 : 400, margin: 0 }}>
+                            <p style={{ fontSize: 14, color: isMe ? "var(--color-text)" : "var(--color-text-secondary)", lineHeight: 1.6, fontWeight: isMe ? 500 : 400, margin: 0, fontFamily: "var(--font-transcript)" }}>
                               {seg.text}
                             </p>
                           </div>
@@ -1313,7 +1324,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
                   );
                 }
                 return (
-                  <p style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                  <p style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "var(--font-transcript)" }}>
                     {recording.transcript_text}
                   </p>
                 );
@@ -3628,6 +3639,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
                   color: turn.role === "coach" ? "var(--color-text)" : "var(--color-text-secondary)",
                   lineHeight: 1.6, margin: 0,
                   fontWeight: turn.role === "coach" ? 500 : 400,
+                  fontFamily: "var(--font-transcript)",
                 }}>
                   {turn.text}
                 </p>
@@ -3718,6 +3730,7 @@ function SettingsScreen() {
 function SettingsGeneral({ mode, setMode }: { mode: string; setMode: (m: "light" | "auto" | "dark") => void }) {
   const [userName, setUserName] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
+  const [typo, setTypo] = useState(() => localStorage.getItem("duet-typography") || "default");
 
   useEffect(() => {
     invoke<{ user_name: string | null }>("get_voice_profile").then((res) => {
@@ -3759,32 +3772,120 @@ function SettingsGeneral({ mode, setMode }: { mode: string; setMode: (m: "light"
 
       <div className="card">
         <h3 className="settings-heading">Appearance</h3>
-        <div style={{ display: "flex", gap: 0, borderRadius: "var(--radius-md)", overflow: "hidden", border: "1px solid var(--color-border)" }}>
-          {(["light", "auto", "dark"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              style={{
-                flex: 1,
-                padding: "var(--space-sm) var(--space-md)",
-                background: mode === m ? "var(--color-primary)" : "var(--color-surface)",
-                color: mode === m ? "var(--color-primary-text)" : "var(--color-text-secondary)",
-                border: "none",
-                cursor: "pointer",
-                fontFamily: "var(--font-body)",
-                fontSize: 13,
-                fontWeight: 600,
-                textTransform: "capitalize",
-                borderRight: m !== "dark" ? "1px solid var(--color-border)" : "none",
-              }}
+        <p style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: "var(--space-sm)" }}>Display</p>
+        <div style={{ display: "flex", gap: "var(--space-md)" }}>
+          {([
+            { key: "light" as const, label: "Light", bg: "#FAFAF8", surface: "#FFFFFF", text: "#1A1A18", muted: "#7A7A72", border: "#E5E5E0", accent: "#2A7D6E" },
+            { key: "auto" as const, label: "Auto", bg: "linear-gradient(90deg, #FAFAF8 50%, #1A1A18 50%)", surface: "#FFFFFF", text: "#1A1A18", muted: "#7A7A72", border: "#E5E5E0", accent: "#2A7D6E" },
+            { key: "dark" as const, label: "Dark", bg: "#1A1A18", surface: "#2A2A28", text: "#E5E5E0", muted: "#7A7A72", border: "#3A3A38", accent: "#3BCEAC" },
+          ]).map(({ key, label, bg, surface, text, muted, border, accent }) => (
+            <div
+              key={key}
+              onClick={() => setMode(key)}
+              style={{ cursor: "pointer", textAlign: "center", width: 120 }}
             >
-              {m === "auto" ? "Auto" : m === "light" ? "Light" : "Dark"}
-            </button>
+              {key === "auto" ? (
+                <div style={{
+                  width: 120, height: 100, boxSizing: "border-box",
+                  display: "flex", overflow: "hidden",
+                  borderRadius: "var(--radius-md)",
+                  border: mode === key ? "2px solid #2A7D6E" : "2px solid #E5E5E0",
+                }}>
+                  {/* Light half */}
+                  <div style={{ flex: 1, background: "#FAFAF8", padding: 6, display: "flex", gap: 4 }}>
+                    <div style={{ width: 12, background: "#FFFFFF", borderRadius: 2, display: "flex", flexDirection: "column", gap: 2, padding: 2 }}>
+                      <div style={{ height: 2, background: "#7A7A72", borderRadius: 1 }} />
+                      <div style={{ height: 2, background: "#7A7A72", borderRadius: 1 }} />
+                    </div>
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+                      <div style={{ height: 2, width: "70%", background: "#1A1A18", borderRadius: 1, opacity: 0.6 }} />
+                      <div style={{ flex: 1, background: "#FFFFFF", borderRadius: 2, padding: 3, display: "flex", flexDirection: "column", gap: 2 }}>
+                        <div style={{ height: 2, background: "#7A7A72", borderRadius: 1, opacity: 0.4 }} />
+                        <div style={{ height: 2, width: "60%", background: "#7A7A72", borderRadius: 1, opacity: 0.4 }} />
+                      </div>
+                    </div>
+                  </div>
+                  {/* Dark half */}
+                  <div style={{ flex: 1, background: "#1A1A18", padding: 6, display: "flex", gap: 4 }}>
+                    <div style={{ width: 12, background: "#2A2A28", borderRadius: 2, display: "flex", flexDirection: "column", gap: 2, padding: 2 }}>
+                      <div style={{ height: 2, background: "#7A7A72", borderRadius: 1 }} />
+                      <div style={{ height: 2, background: "#7A7A72", borderRadius: 1 }} />
+                    </div>
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+                      <div style={{ height: 2, width: "70%", background: "#E5E5E0", borderRadius: 1, opacity: 0.6 }} />
+                      <div style={{ flex: 1, background: "#2A2A28", borderRadius: 2, padding: 3, display: "flex", flexDirection: "column", gap: 2 }}>
+                        <div style={{ height: 2, background: "#7A7A72", borderRadius: 1, opacity: 0.4 }} />
+                        <div style={{ height: 2, width: "60%", background: "#7A7A72", borderRadius: 1, opacity: 0.4 }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{
+                  background: bg,
+                  padding: 10, width: 120, height: 100, boxSizing: "border-box",
+                  display: "flex", gap: 6,
+                  borderRadius: "var(--radius-md)",
+                  border: mode === key ? `2px solid ${accent}` : `2px solid ${border}`,
+                }}>
+                  <div style={{ width: 20, background: surface, borderRadius: 3, display: "flex", flexDirection: "column", gap: 2, padding: 3 }}>
+                    <div style={{ height: 2, background: muted, borderRadius: 1 }} />
+                    <div style={{ height: 2, background: muted, borderRadius: 1 }} />
+                    <div style={{ height: 2, background: muted, borderRadius: 1 }} />
+                  </div>
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 3 }}>
+                    <div style={{ height: 3, width: "60%", background: text, borderRadius: 1, opacity: 0.7 }} />
+                    <div style={{ flex: 1, background: surface, borderRadius: 3, padding: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+                      <div style={{ height: 2, width: "80%", background: muted, borderRadius: 1, opacity: 0.5 }} />
+                      <div style={{ height: 2, width: "50%", background: muted, borderRadius: 1, opacity: 0.5 }} />
+                      <div style={{ height: 6, width: "40%", background: accent, borderRadius: 2, marginTop: 2, opacity: 0.8 }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <p style={{
+                marginTop: 6, fontSize: 12, fontWeight: 600,
+                color: mode === key ? "var(--color-primary)" : "var(--color-text-muted)",
+              }}>
+                {label}
+              </p>
+            </div>
           ))}
         </div>
-        <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: "var(--space-xs)" }}>
-          Auto follows your system setting.
-        </p>
+        <p style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginTop: "var(--space-lg)", marginBottom: "var(--space-sm)" }}>Session Font</p>
+        <div style={{ display: "flex", gap: "var(--space-md)" }}>
+          {([
+            { key: "default", label: "Default", display: '"Satoshi", system-ui, sans-serif', body: '"DM Sans", system-ui, sans-serif', sample: "The quick brown fox" },
+            { key: "classic", label: "Classic", display: 'Georgia, "Times New Roman", serif', body: 'Georgia, "Times New Roman", serif', sample: "The quick brown fox" },
+            { key: "modern", label: "Modern", display: '"Inter", "Helvetica Neue", system-ui, sans-serif', body: '"Inter", "Helvetica Neue", system-ui, sans-serif', sample: "The quick brown fox" },
+            { key: "mono", label: "Mono", display: '"JetBrains Mono", "SF Mono", monospace', body: '"JetBrains Mono", "SF Mono", monospace', sample: "The quick brown fox" },
+          ] as const).map(({ key, label, display, body, sample }) => (
+              <div
+                key={key}
+                onClick={() => {
+                  localStorage.setItem("duet-typography", key);
+                  document.documentElement.style.setProperty("--font-transcript", body);
+                  setTypo(key);
+                }}
+                style={{
+                  cursor: "pointer", width: 120, textAlign: "center",
+                }}
+              >
+                <div style={{
+                  padding: "var(--space-sm)", width: 120, height: 100, boxSizing: "border-box",
+                  borderRadius: "var(--radius-md)",
+                  border: typo === key ? "2px solid var(--color-primary)" : "2px solid var(--color-border)",
+                  display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 4,
+                }}>
+                  <p style={{ fontFamily: display, fontWeight: 700, fontSize: 14 }}>Aa Bb Cc</p>
+                  <p style={{ fontFamily: body, fontSize: 11, color: "var(--color-text-muted)" }}>{sample}</p>
+                </div>
+                <p style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: typo === key ? "var(--color-primary)" : "var(--color-text-muted)" }}>
+                  {label}
+                </p>
+              </div>
+          ))}
+        </div>
       </div>
 
       <div className="card">
