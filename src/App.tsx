@@ -2699,8 +2699,7 @@ function DashboardScreen() {
   if (loading) {
     return (
       <>
-        <p className="page-label">Dashboard</p>
-        <h1 className="page-title">Loading...</h1>
+        <h1 className="settings-heading">Loading...</h1>
       </>
     );
   }
@@ -2708,8 +2707,7 @@ function DashboardScreen() {
   if (data.length === 0) {
     return (
       <>
-        <p className="page-label">Dashboard</p>
-        <h1 className="page-title">Your progress</h1>
+        <h1 className="settings-heading">Your progress</h1>
         <div className="card">
           <p style={{ color: "var(--color-text-muted)" }}>
             No sessions yet. Record a meeting to start tracking your progress.
@@ -2737,10 +2735,55 @@ function DashboardScreen() {
   const maxFillers = Math.max(...data.map((d) => d.filler_count), 1);
   const maxDisfluencies = Math.max(...data.map((d) => d.disfluency_count), 1);
 
+  // Streaks: consecutive days (today back) with any practice or drill activity
+  const STREAK_ICONS = ["⚡", "🚀", "⭐", "✨", "💎", "🔥", "🌟", "💫", "🎯", "🏆", "🌈", "☄️", "🌠", "🎖️", "🥇", "👑", "🦄", "🌙", "☀️", "🪄"];
+  const activeDays = new Set<string>();
+  for (const d of data) {
+    if (d.drill_attempt_count > 0 || d.duration_seconds > 0) {
+      activeDays.add(new Date(d.recorded_at).toDateString());
+    }
+  }
+  const dayMs = 86400000;
+  let currentStreak = 0;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (let i = 0; ; i++) {
+    const day = new Date(today.getTime() - i * dayMs).toDateString();
+    if (activeDays.has(day)) currentStreak++;
+    else if (i === 0) continue; // allow today to be empty
+    else break;
+  }
+  // Highest streak across history
+  const sortedDays = [...activeDays]
+    .map((s) => new Date(s).getTime())
+    .sort((a, b) => a - b);
+  let highestStreak = 0;
+  let run = 0;
+  let prev = -Infinity;
+  for (const t of sortedDays) {
+    if (t - prev === dayMs) run++;
+    else run = 1;
+    if (run > highestStreak) highestStreak = run;
+    prev = t;
+  }
+  if (currentStreak > highestStreak) highestStreak = currentStreak;
+  const streakIcon = STREAK_ICONS[Math.floor(Date.now() / dayMs) % STREAK_ICONS.length];
+
   return (
     <>
-      <p className="page-label">Dashboard</p>
-      <h1 className="page-title">Your progress</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-md)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-sm)" }}>
+          <span style={{ fontSize: 22, filter: "grayscale(0.8)", display: "inline-block" }}>{streakIcon}</span>
+          <span style={{ fontSize: 15, fontWeight: 400, color: "var(--color-text)" }}>
+            {currentStreak} 
+          </span>
+        </div>
+        <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
+          Highest streak is {highestStreak}
+        </span>
+      </div>
+      <div className="card">
+      <h1 className="settings-heading">Your progress</h1>
 
       {/* Summary cards */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "var(--space-md)", marginBottom: "var(--space-lg)" }}>
@@ -2774,7 +2817,7 @@ function DashboardScreen() {
         const paceChange = latest.pace_wpm - baseline.pace_wpm;
 
         return (
-          <div className="card" style={{ marginBottom: "var(--space-lg)", borderLeft: "3px solid var(--color-primary)", borderRadius: "0 var(--radius-md) var(--radius-md) 0" }}>
+          <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
             <h3 className="settings-heading">Since your first session</h3>
             <div style={{ display: "flex", gap: "var(--space-lg)", flexWrap: "wrap" }}>
               <div>
@@ -2917,6 +2960,7 @@ function DashboardScreen() {
             ))}
           </tbody>
         </table>
+      </div>
       </div>
     </>
   );
