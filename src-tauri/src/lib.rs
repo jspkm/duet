@@ -212,9 +212,11 @@ pub fn run() {
                 tauri::WindowEvent::Resized(size) => {
                     if size.width > 0 && size.height > 0 {
                         if let Ok(data_dir) = window.app_handle().path().app_data_dir() {
+                            let scale_factor = window.scale_factor().unwrap_or(1.0);
+                            let logical_size = size.to_logical::<f64>(scale_factor);
                             let size_json = serde_json::json!({
-                                "width": size.width,
-                                "height": size.height,
+                                "width": logical_size.width,
+                                "height": logical_size.height,
                             });
                             let _ = std::fs::write(
                                 data_dir.join("window_size.json"),
