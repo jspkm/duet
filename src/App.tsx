@@ -3596,11 +3596,11 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const [ready, setReady] = useState(false);
   const autoStarted = useRef(false);
   useEffect(() => {
-    if (ready && !autoStarted.current && state === "idle") {
+    if (ready && !autoStarted.current && state === "idle" && !isFirstSession) {
       autoStarted.current = true;
       startSession();
     }
-  }, [ready, state, startSession]);
+  }, [ready, state, startSession, isFirstSession]);
 
   // Clean up on unmount
   useEffect(() => () => {
