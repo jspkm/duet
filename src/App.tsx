@@ -3059,7 +3059,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
         // Pre-synthesize intro audio so there's no delay
         // First session: full intro. First exercise session: explain format. After that: skip intro.
         const introText = first
-          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, end the session, or something like that. Ready? Tell me your name and what you do."
+          ? "Hi, I am Lisa. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, end the session, or something like that. Ready? Tell me your name and what you do."
           : countRes.count <= 1
             ? "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Here's your first one."
             : null; // No intro needed, jump straight to question
@@ -3730,7 +3730,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       if (hasIntro) {
         setState("intro");
         const introText = isFirstSession
-          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, end the session, or something like that. Ready? Tell me your name and what you do."
+          ? "Hi, I am Lisa. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, end the session, or something like that. Ready? Tell me your name and what you do."
           : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Here's your first one.";
 
         if (introAudioPath) {
@@ -3866,32 +3866,30 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
           </div>
 
           {/* Status indicator */}
-          <div style={{ textAlign: "center" }}>
+          <div>
             {state === "listening" && (
-              <div>
+              <div style={{ textAlign: "center" }}>
                 <div className="recording-pulse" />
                 <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
                   {waitingNudge || "Listening..."}
                 </p>
               </div>
             )}
-            {(state === "processing" || state === "analyzing") && (
-              <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
-                {statusText || "Processing..."}
-              </p>
-            )}
-            {state === "speaking" && (
-              <p style={{ fontSize: 13, color: "var(--color-primary)" }}>
-                Coach is speaking...
-              </p>
-            )}
-            {state === "intro" && (
-              <p style={{ fontSize: 13, color: "var(--color-primary)" }}>
-                Coach is speaking...
-              </p>
+            {(state === "processing" ||
+              state === "analyzing" ||
+              (state === "intro" && history.length === 0)) && (
+              <div
+                className="typing-indicator"
+                aria-label={state === "intro" ? "Coach is starting" : "Coach is thinking"}
+                role="status"
+              >
+                <span />
+                <span />
+                <span />
+              </div>
             )}
             {state === "wrapping" && (
-              <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
+              <p style={{ fontSize: 13, color: "var(--color-text-muted)", textAlign: "center" }}>
                 {statusText || "Wrapping up..."}
               </p>
             )}
