@@ -828,7 +828,7 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
       const t = r.session_type === "coach_first" ? "coach" : (r.session_type || "recording");
       (typeMap[t] ??= []).push(r);
     }
-    const labels: Record<string, string> = { coach: "Coach", recording: "Recording" };
+    const labels: Record<string, string> = { coach: "Practice", recording: "Recording" };
     for (const [type, items] of Object.entries(typeMap)) {
       groups.push({ label: labels[type] || type, type, items });
     }
@@ -1078,7 +1078,7 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
                 </select>
               )}
               {viewMode === "list" && (r.session_type === "coach" || r.session_type === "coach_first") && (
-                <span className="metric" style={{ color: "var(--color-primary)" }}>Coach</span>
+                <span className="metric" style={{ color: "var(--color-primary)" }}>Practice</span>
               )}
               {confirmDeleteId !== r.id && <button
                 onClick={(e) => { e.stopPropagation(); handleDeleteClick(r.id); }}
@@ -1442,12 +1442,11 @@ function PracticeDrillList({ recordingId, moments }: { recordingId: number; mome
             >
               <div style={{ display: "flex", alignItems: "center", gap: "var(--space-sm)" }}>
                 <span style={{
-                  width: 24, height: 24, borderRadius: "var(--radius-full)",
-                  background: moment.severity >= 7 ? "var(--color-error)" : moment.severity >= 4 ? "var(--color-warning)" : "var(--color-text-muted)",
-                  color: "#fff", fontSize: 11, fontWeight: 700,
-                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 16, fontWeight: 700, color: "var(--color-text-muted)",
+                  minWidth: 20, textAlign: "center",
+                  fontFamily: "var(--font-mono)",
                 }}>
-                  {moment.severity}
+                  {idx + 1}
                 </span>
                 <div>
                   <p style={{ fontSize: 14, fontWeight: 500 }}>
