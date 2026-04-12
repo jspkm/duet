@@ -243,6 +243,16 @@ function DeleteConfirmation({ onConfirm, onCancel }: { onConfirm: () => void; on
 
 // Pick a MIME type that both MediaRecorder and the webview can play back.
 // WKWebView (macOS) doesn't support WebM. Prefer mp4/aac, fall back to webm.
+// Split text into sentences, keeping end punctuation. Used to pipeline TTS so
+// we can start playing the first sentence while later ones are still synthesizing.
+function splitSentences(text: string): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const matches = trimmed.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g);
+  if (!matches) return [trimmed];
+  return matches.map((s) => s.trim()).filter(Boolean);
+}
+
 function getRecorderMimeType(): { mimeType: string; ext: string } {
   for (const candidate of [
     { mimeType: "audio/mp4", ext: "m4a" },
@@ -3027,7 +3037,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
         // Pre-synthesize intro audio so there's no delay
         // First session: full intro. First exercise session: explain format. After that: skip intro.
         const introText = first
-          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me your name and what you do."
+          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, end the session, or something like that. Ready? Tell me your name and what you do."
           : countRes.count <= 1
             ? "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Here's your first one."
             : null; // No intro needed, jump straight to question
@@ -3092,10 +3102,16 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     }
   }, []);
 
-  // Speak text via Piper TTS, adjusted to user's speaking pace
-  const coachSpeak = useCallback(async (text: string): Promise<void> => {
+  // Speak text via Piper TTS, pipelined per-sentence so audio starts as soon as
+  // the first sentence is synthesized and subsequent sentences are synthesized
+  // in parallel with playback. `onSentenceStart` fires with the accumulated text
+  // at the moment each sentence begins playing — used to reveal text in sync
+  // with audio rather than upfront.
+  const coachSpeak = useCallback(async (
+    text: string,
+    onSentenceStart?: (accumulated: string) => void,
+  ): Promise<void> => {
     const dataDir = await appDataDir();
-    const outputPath = await join(dataDir, "coach", `coach-${Date.now()}.wav`);
 
     // Map user WPM to coach speed (length_scale).
     // Normal pace ~130-150 WPM → 1.0. Faster user → slightly faster coach. Slower → slower.
@@ -3103,9 +3119,51 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
     const userWpm = userPaceRef.current;
     const speed = Math.max(0.88, Math.min(1.15, 140 / Math.max(userWpm, 80)));
 
-    await invoke("speak_text", { text, outputPath, speed });
-    await playCoachAudio(outputPath);
+    const synth = async (chunk: string): Promise<string> => {
+      const outputPath = await join(
+        dataDir,
+        "coach",
+        `coach-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.wav`,
+      );
+      await invoke("speak_text", { text: chunk, outputPath, speed });
+      return outputPath;
+    };
+
+    const sentences = splitSentences(text);
+    if (sentences.length === 0) return;
+
+    let nextSynth = synth(sentences[0]);
+    let accumulated = "";
+
+    for (let i = 0; i < sentences.length; i++) {
+      const audioPath = await nextSynth;
+      if (i + 1 < sentences.length) {
+        nextSynth = synth(sentences[i + 1]);
+      }
+      accumulated = accumulated ? `${accumulated} ${sentences[i]}` : sentences[i];
+      onSentenceStart?.(accumulated);
+      await playCoachAudio(audioPath);
+    }
   }, [playCoachAudio]);
+
+  // Speak text and progressively reveal it in the coach history turn, so text
+  // lands in sync with audio. Appends a new coach turn on the first sentence
+  // and updates its text as subsequent sentences begin playing.
+  const coachSpeakAndReveal = useCallback(async (text: string): Promise<void> => {
+    let appended = false;
+    await coachSpeak(text, (accumulated) => {
+      if (!appended) {
+        historyRef.current = [...historyRef.current, { role: "coach", text: accumulated }];
+        appended = true;
+      } else {
+        const last = historyRef.current.length - 1;
+        historyRef.current = historyRef.current.map((t, i) =>
+          i === last ? { ...t, text: accumulated } : t,
+        );
+      }
+      setHistory([...historyRef.current]);
+    });
+  }, [coachSpeak]);
 
   // Start the session-wide recorder (called once at session start)
   const startSessionRecorder = useCallback(async () => {
@@ -3307,7 +3365,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
 
       // Check for exit words
       const lower = userText.toLowerCase();
-      const exitPhrases = ["that's it", "i'm done", "let's stop", "stop", "bye", "we're done", "that's all", "end session"];
+      const exitPhrases = ["end the session", "end session", "that's it", "i'm done", "let's stop", "stop", "bye", "we're done", "that's all"];
       const wantsToStop = exitPhrases.some((p) => lower.includes(p));
 
       if (wantsToStop) {
@@ -3315,9 +3373,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
         setHistory([...historyRef.current]);
         setState("wrapping");
         setStatusText("Wrapping up...");
-        await coachSpeak("Great, that's all I need. Let me put your report together.");
-        historyRef.current = [...historyRef.current, { role: "coach", text: "Great, that's all I need. Let me put your report together." }];
-        setHistory([...historyRef.current]);
+        await coachSpeakAndReveal("Great, that's all I need. Let me put your report together.");
         await runPostSession();
         return;
       }
@@ -3349,10 +3405,8 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       if (response.should_wrap_up) {
         const wrapMsg = response.wrap_up_message || "Good session. Let me put together your report.";
         const coachText = response.echo ? `${response.echo} ${wrapMsg}` : wrapMsg;
-        historyRef.current = [...historyRef.current, { role: "coach", text: coachText }];
-        setHistory([...historyRef.current]);
         setState("speaking");
-        await coachSpeak(coachText);
+        await coachSpeakAndReveal(coachText);
         await runPostSession();
         return;
       }
@@ -3362,10 +3416,8 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
         ? (response.echo ? `${response.echo} ${response.next_question}` : response.next_question)
         : response.echo;
 
-      historyRef.current = [...historyRef.current, { role: "coach", text: coachText }];
-      setHistory([...historyRef.current]);
       setState("speaking");
-      await coachSpeak(coachText);
+      await coachSpeakAndReveal(coachText);
 
       // Resume listening
       await startListening();
@@ -3375,7 +3427,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       setError(`Something went wrong: ${err?.message || err}`);
       setState("idle");
     }
-  }, [history, isFirstSession, coachSpeak, startListening]);
+  }, [history, isFirstSession, coachSpeak, coachSpeakAndReveal, startListening]);
 
   // Run post-session: save immediately, analyze in background
   const runPostSession = useCallback(async () => {
@@ -3553,16 +3605,16 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       if (hasIntro) {
         setState("intro");
         const introText = isFirstSession
-          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, that's it. Ready? Tell me your name and what you do."
+          ? "Hi. I'm your speech coach. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, end the session, or something like that. Ready? Tell me your name and what you do."
           : "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Here's your first one.";
 
-        historyRef.current = [{ role: "coach", text: introText }];
-        setHistory([...historyRef.current]);
-
         if (introAudioPath) {
+          // Cached intro audio is instantly available, so text and audio land together.
+          historyRef.current = [{ role: "coach", text: introText }];
+          setHistory([...historyRef.current]);
           await playCoachAudio(introAudioPath);
         } else {
-          await coachSpeak(introText);
+          await coachSpeakAndReveal(introText);
         }
       }
 
@@ -3578,10 +3630,8 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
           }
         );
         if (response.next_question) {
-          historyRef.current = [...historyRef.current, { role: "coach", text: response.next_question }];
-          setHistory([...historyRef.current]);
           setState("speaking");
-          await coachSpeak(response.next_question);
+          await coachSpeakAndReveal(response.next_question);
         }
       }
 
@@ -3590,7 +3640,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
       setError(`Could not start session: ${err?.message || err}`);
       setState("idle");
     }
-  }, [isFirstSession, sessionNumber, introAudioPath, coachSpeak, playCoachAudio, startListening, startSessionRecorder]);
+  }, [isFirstSession, sessionNumber, introAudioPath, coachSpeakAndReveal, playCoachAudio, startListening, startSessionRecorder]);
 
   // Auto-start: skip idle screen and begin session immediately
   const [ready, setReady] = useState(false);
