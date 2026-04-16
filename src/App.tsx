@@ -33,6 +33,23 @@ interface ProgressEvent {
   percent: number;
 }
 
+interface ImpressionDimension {
+  key: string;
+  name: string;
+  score: number;
+  evidence: string[];
+  improvement: string;
+}
+
+interface FirstImpression {
+  summary: string;
+  dimensions?: ImpressionDimension[];
+  // Legacy shape from older records; rendered as a fallback.
+  focus_area?: string;
+  strengths?: string[];
+  patterns?: string[];
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [activeRecordingId, setActiveRecordingId] = useState<number | null>(null);
@@ -1155,7 +1172,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
   const [userName, setUserName] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [editName, setEditName] = useState("");
-  const [firstImpression, setFirstImpression] = useState<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] } | null>(null);
+  const [firstImpression, setFirstImpression] = useState<FirstImpression | null>(null);
 
   useEffect(() => {
     invoke<{ user_name: string | null }>("get_voice_profile").then((res) => {
@@ -1369,17 +1386,60 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
         )}
       </div>
 
-      {/* Coach's First Impression (for coach sessions) */}
+      {recording && recording.session_type === "coach_first" && (
+        <>
+          <h3 className="settings-heading" style={{ marginBottom: "var(--space-sm)" }}>
+            Action Plan
+          </h3>
+          <div className="card" style={{ marginBottom: "var(--space-md)" }}>
+            {!firstImpression?.summary ? (
+              <p style={{ fontSize: 13, color: "var(--color-text-muted)", margin: 0 }}>
+                No evaluation yet.
+              </p>
+            ) : (
+              <p style={{ fontSize: 14, lineHeight: 1.7, color: "var(--color-text-secondary)", margin: 0 }}>
+                {firstImpression.summary}
+              </p>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Existing impression details */}
       {firstImpression && (
         <>
-          <div className="card" style={{ marginBottom: "var(--space-md)" }}>
-            <h3 className="settings-heading">Coach's Report</h3>
-            <p style={{ fontSize: 14, lineHeight: 1.7, color: "var(--color-text-secondary)" }}>
-              {firstImpression.summary}
-            </p>
-          </div>
 
-          {firstImpression.focus_area && (
+          {firstImpression.dimensions && firstImpression.dimensions.length > 0 && (
+            <div style={{ marginBottom: "var(--space-lg)" }}>
+              {firstImpression.dimensions.map((d) => (
+                <div key={d.key} className="card" style={{ marginBottom: "var(--space-sm)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-xs)" }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: "var(--color-text)" }}>
+                      {d.name}
+                    </span>
+                    <span className={`score-badge score-${d.score}`}>{d.score}/5</span>
+                  </div>
+                  {d.evidence && d.evidence.length > 0 && (
+                    <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+                      {d.evidence.map((e, i) => (
+                        <li key={i} style={{ fontSize: 13, color: "var(--color-text-secondary)", lineHeight: 1.6, paddingLeft: 12, position: "relative" }}>
+                          <span style={{ position: "absolute", left: 0 }}>·</span>{e}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {d.improvement && (
+                    <p style={{ fontSize: 13, color: "var(--color-primary)", marginTop: "var(--space-xs)", marginBottom: 0 }}>
+                      <span style={{ fontWeight: 600 }}>Practice plan: </span>{d.improvement}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Legacy shape fallback for older records */}
+          {!firstImpression.dimensions && firstImpression.focus_area && (
             <div className="card" style={{ marginBottom: "var(--space-md)", borderLeft: "3px solid var(--color-primary)", borderRadius: "0 var(--radius-md) var(--radius-md) 0" }}>
               <p style={{ fontSize: 12, fontWeight: 600, color: "var(--color-primary)", marginBottom: "var(--space-xs)" }}>
                 Priority focus area
@@ -1389,8 +1449,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
               </p>
             </div>
           )}
-
-          {firstImpression.strengths.length > 0 && (
+          {!firstImpression.dimensions && firstImpression.strengths && firstImpression.strengths.length > 0 && (
             <div className="card" style={{ marginBottom: "var(--space-md)" }}>
               <h3 className="settings-heading">What you do well</h3>
               {firstImpression.strengths.map((s, i) => (
@@ -1398,8 +1457,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
               ))}
             </div>
           )}
-
-          {firstImpression.patterns.length > 0 && (
+          {!firstImpression.dimensions && firstImpression.patterns && firstImpression.patterns.length > 0 && (
             <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
               <h3 className="settings-heading">Patterns observed</h3>
               {firstImpression.patterns.map((p, i) => (
@@ -1411,19 +1469,23 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
       )}
 
 
-      {/* Practice Points */}
-      <h3 className="settings-heading" style={{ marginBottom: "var(--space-md)" }}>
-        Practice Points ({moments.length})
-      </h3>
+      {/* Practice Points — hidden on first sessions (Action Plan covers it) */}
+      {recording?.session_type !== "coach_first" && (
+        <>
+          <h3 className="settings-heading" style={{ marginBottom: "var(--space-md)" }}>
+            Practice Points ({moments.length})
+          </h3>
 
-      {moments.length === 0 ? (
-        <div className="card">
-          <p style={{ color: "var(--color-text-muted)" }}>
-            Your speech was clean. No moments to practice.
-          </p>
-        </div>
-      ) : (
-        <PracticeDrillList recordingId={recordingId!} moments={moments} />
+          {moments.length === 0 ? (
+            <div className="card">
+              <p style={{ color: "var(--color-text-muted)" }}>
+                Your speech was clean. No moments to practice.
+              </p>
+            </div>
+          ) : (
+            <PracticeDrillList recordingId={recordingId!} moments={moments} />
+          )}
+        </>
       )}
     </>
   );
@@ -3007,7 +3069,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
   const [state, setState] = useState<CoachState>("idle");
   const [history, setHistory] = useState<{ role: "coach" | "user"; text: string }[]>([]);
   const [statusText, setStatusText] = useState("");
-  const [firstImpression, setFirstImpression] = useState<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] } | null>(null);
+  const [firstImpression, setFirstImpression] = useState<FirstImpression | null>(null);
   const [userName, setUserName] = useState<string | null>(null);
   const [isFirstSession, setIsFirstSession] = useState(forceFirst);
   const [sessionNumber, setSessionNumber] = useState(0);
@@ -3059,7 +3121,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
         // Pre-synthesize intro audio so there's no delay
         // First session: full intro. First exercise session: explain format. After that: skip intro.
         const introText = first
-          ? "Hi, I am Lisa. This is our first session together. I'd like to spend about three minutes getting to know you and how you speak. You can stop anytime, just say, end the session, or something like that. Ready? Tell me your name and what you do."
+          ? "Hi, I am Lisa. This is our first session together. I'd like to spend about three to five minutes getting to know you and how you speak. It will also be a foundation for a practice session named My Athentic Voice. You can stop anytime, just say, end the session, or something like that. Ready? Tell me your name and what you do."
           : countRes.count <= 1
             ? "Welcome back. Today we're doing practice exercises. I'll ask you a question, listen to your answer, and if I hear any fillers or hesitations, I'll point them out and ask you to try again. Here's your first one."
             : null; // No intro needed, jump straight to question
@@ -3684,7 +3746,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
           }
 
           // Generate first impression / session report
-          const impression = await invoke<{ summary: string; focus_area: string; strengths: string[]; patterns: string[] }>(
+          const impression = await invoke<FirstImpression>(
             "generate_first_impression", {
               conversationText,
               metrics: { filler_rate: fillerRate, pace_wpm: metrics.avg_pace_wpm, hedging_rate: hedgingRate, pause_count: metrics.pause_count, word_count: metrics.word_count, duration: duration },
