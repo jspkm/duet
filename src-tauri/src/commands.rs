@@ -284,6 +284,20 @@ pub async fn generate_first_impression(
 }
 
 #[tauri::command]
+pub async fn update_first_impression(
+    impression_json: String,
+    db: State<'_, Database>,
+) -> Result<(), String> {
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE coach_session_history SET first_impression_json = ?1 WHERE session_number = 1",
+        rusqlite::params![impression_json],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn speak_text(
     text: String,
     output_path: String,

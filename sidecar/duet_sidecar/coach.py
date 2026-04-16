@@ -485,15 +485,66 @@ def coach_conversation_turn(params: dict, progress_callback: Callable) -> dict:
     }
 
 
+FIRST_SESSION_RUBRIC = """You are evaluating a first coaching session against a standardized rubric. Score each dimension independently on a 1-5 scale using the anchors below. Anchor every score to specific evidence from the transcript — cite phrases or patterns, not overall impression. Default to 3 when evidence is mixed or ambiguous. Subject Matter Expertise is intentionally excluded from this session and will be assessed separately later.
+
+Score each agent independently — ignore the other dimensions. A monotone voice with perfect grammar is Delivery 2 and Language Precision 5.
+
+## 1. Delivery & Clarity
+Pace, volume, pitch variation, prosody, strategic pauses, articulation crispness, pronunciation accuracy. Judges acoustic output only.
+- 5: Dynamic pitch range and deliberate pace variation; strategic pauses; crisp articulation; voice draws listener in.
+- 4: Noticeable pitch/pace/volume variety; clearly intelligible; one or two minor slurs; occasional flat stretches.
+- 3: Some variation but largely predictable; pace 120-170 wpm; occasional mumbled words; neither dull nor compelling.
+- 2: Mostly monotone or rushed/dragging; few meaningful pauses; frequent mumbling; listener loses words.
+- 1: Flat monotone or erratic pacing; volume interferes; persistently unclear; multiple unintelligible words per utterance.
+
+## 2. Fluency
+Filler word frequency, false starts, self-corrections, hesitations, repetitions, trailing-off sentences. Smoothness independent of delivery.
+- 5: Near-zero fillers (<2/min); thoughts complete cleanly; no audible self-correction.
+- 4: Low filler rate (2-5/min); occasional smooth self-correction; forward momentum intact.
+- 3: Noticeable fillers (6-10/min); some false starts; functional but uneven flow.
+- 2: Frequent fillers (11-15/min); regular hesitations or trailing sentences; choppy.
+- 1: Fillers >15/min or dominated by hesitations, abandoned sentences, restarts; flow broken.
+
+## 3. Language Precision
+Vocabulary range and accuracy, grammar, syntactic variety, register, conciseness vs. padding. Does not evaluate organization.
+- 5: Precise varied vocabulary; grammatically clean; structure varied and register-matched; zero padding.
+- 4: Accurate word choice with occasional vivid phrasing; minor grammar slips; little wasted language.
+- 3: Generally correct grammar and vocabulary; some repetition or imprecise words; register mostly fine.
+- 2: Frequent grammar errors, vague wording, or register mismatch; noticeable padding or vague qualifiers.
+- 1: Persistent grammar problems or wrong register; meaning often obscured by language issues.
+
+## 4. Structure & Coherence
+Opening, logical progression, signposting, transitions, reasoning strength, closure. Independent of language quality.
+- 5: Clear opening, logical progression, explicit signposting, strong conclusion; outline-able from memory.
+- 4: Organized with identifiable sections; most transitions work; minor gaps; easy to follow.
+- 3: Main points discernible but order is loose; missing transitions; weak conclusion; followable with effort.
+- 2: Ideas present but poorly sequenced; few transitions; points overlap; no clear beginning-middle-end.
+- 1: Stream-of-consciousness or chaotic; no visible structure; main points unidentifiable.
+
+## 5. Engagement & Rapport
+Warmth, confidence, empathy cues, responsiveness, turn-taking, inclusive language, adaptation. Separate from vocal delivery.
+- 5: Warmth + confidence + attunement; strong listening cues; adaptive tone shifts; genuinely connected.
+- 4: Generally warm and confident; responsive; occasional flat moments but clearly audience-aware.
+- 3: Neutral tone; basic turn-taking without much attunement; broadcasts more than connects.
+- 2: Cold, hesitant, or over-formal; minimal responsiveness; interruptions or tone-deaf moments.
+- 1: Detached, dismissive, anxious, or hostile; no audience awareness; interpersonally jarring."""
+
+
 def generate_first_impression(params: dict, progress_callback: Callable) -> dict:
-    """Generate the Coach's First Impression summary card.
+    """Generate the Coach's First Impression against the 5-dimension rubric.
 
     Params:
         conversation_text: Full transcript of the first session conversation
         metrics: {filler_rate, pace_wpm, hedging_rate, pause_count, word_count, duration}
 
     Returns:
-        {"summary": str, "focus_area": str, "strengths": [str], "patterns": [str]}
+        {
+            "summary": str,
+            "dimensions": [
+                {"key": str, "name": str, "score": int,
+                 "evidence": [str], "improvement": str}
+            ]
+        }
     """
     conversation_text = params.get("conversation_text", "")
     metrics = params.get("metrics", {})
@@ -502,11 +553,15 @@ def generate_first_impression(params: dict, progress_callback: Callable) -> dict
 
     client = _get_client()
 
-    user_prompt = f"""Here is the transcript from a first coaching session:
+    user_prompt = f"""{FIRST_SESSION_RUBRIC}
+
+---
+
+Transcript from the first coaching session:
 
 {conversation_text[:6000]}
 
-Speech metrics from this session:
+Speech metrics:
 - Filler rate: {metrics.get('filler_rate', 0):.1f} per minute
 - Pace: {metrics.get('pace_wpm', 0):.0f} words per minute
 - Hedging rate: {metrics.get('hedging_rate', 0):.1f} per minute
@@ -514,20 +569,29 @@ Speech metrics from this session:
 - Total words: {metrics.get('word_count', 0)}
 - Duration: {metrics.get('duration', 0):.0f} seconds
 
-Write a Coach's First Impression. Be warm, direct, specific. Reference their actual words. This is the anchor for their entire coaching journey.
+Return JSON in this exact shape. The `dimensions` array must contain exactly these five entries, in this order, with these keys:
 
-Respond in JSON:
 {{
-    "summary": "3-4 sentence overall first impression. Lead with something positive and specific. Then name the #1 pattern to work on. End with encouragement.",
-    "focus_area": "The single most impactful thing to work on first (1 sentence)",
-    "strengths": ["2-3 specific things they do well"],
-    "patterns": ["2-3 specific patterns observed, with examples from their speech"]
+  "summary": "2-3 sentence overall framing. Lead with something specific and positive. Name the highest-leverage pattern to work on. End with a concrete next step.",
+  "dimensions": [
+    {{
+      "key": "delivery",
+      "name": "Delivery & Clarity",
+      "score": 1-5 integer,
+      "evidence": ["observation 1 from transcript/metrics", "observation 2"],
+      "improvement": "One concrete action to move up one level"
+    }},
+    {{ "key": "fluency", "name": "Fluency", "score": ..., "evidence": [...], "improvement": "..." }},
+    {{ "key": "language", "name": "Language Precision", "score": ..., "evidence": [...], "improvement": "..." }},
+    {{ "key": "structure", "name": "Structure & Coherence", "score": ..., "evidence": [...], "improvement": "..." }},
+    {{ "key": "engagement", "name": "Engagement & Rapport", "score": ..., "evidence": [...], "improvement": "..." }}
+  ]
 }}"""
 
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=500,
-        system="You are a professional speech coach writing your first impression of a new client. Be warm, specific, and actionable.",
+        max_tokens=2000,
+        system="You are a professional speech coach producing a rubric-scored first-session evaluation. Be specific, cite evidence, and keep each field concise.",
         messages=[{"role": "user", "content": user_prompt}],
     )
 
@@ -543,16 +607,46 @@ Respond in JSON:
     try:
         result = json.loads(json_text.strip())
     except json.JSONDecodeError:
-        result = {
-            "summary": response_text[:500],
-            "focus_area": "Work on reducing filler words",
-            "strengths": [],
-            "patterns": [],
-        }
+        result = {"summary": response_text[:500], "dimensions": []}
+
+    # Normalize dimensions: ensure every entry has the required fields and a
+    # clamped integer score. Missing dimensions are dropped rather than faked.
+    expected_order = ["delivery", "fluency", "language", "structure", "engagement"]
+    dimension_names = {
+        "delivery": "Delivery & Clarity",
+        "fluency": "Fluency",
+        "language": "Language Precision",
+        "structure": "Structure & Coherence",
+        "engagement": "Engagement & Rapport",
+    }
+    raw_dimensions = result.get("dimensions", []) or []
+    by_key = {}
+    for d in raw_dimensions:
+        if not isinstance(d, dict):
+            continue
+        key = d.get("key")
+        if key in dimension_names:
+            by_key[key] = d
+    dimensions = []
+    for key in expected_order:
+        d = by_key.get(key, {})
+        try:
+            score = int(d.get("score", 3))
+        except (TypeError, ValueError):
+            score = 3
+        score = max(1, min(5, score))
+        evidence = d.get("evidence", []) or []
+        if not isinstance(evidence, list):
+            evidence = [str(evidence)]
+        dimensions.append({
+            "key": key,
+            "name": d.get("name") or dimension_names[key],
+            "score": score,
+            "evidence": [str(e) for e in evidence][:3],
+            "improvement": str(d.get("improvement", "")),
+        })
 
     return {
         "summary": result.get("summary", ""),
-        "focus_area": result.get("focus_area", ""),
-        "strengths": result.get("strengths", []),
-        "patterns": result.get("patterns", []),
+        "dimensions": dimensions,
     }

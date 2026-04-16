@@ -47,6 +47,7 @@ pub fn run() {
             commands::transcribe_fast,
             commands::coach_conversation_turn,
             commands::generate_first_impression,
+            commands::update_first_impression,
             commands::speak_text,
             commands::extract_embedding,
             commands::match_speaker,
