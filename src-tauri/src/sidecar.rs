@@ -21,15 +21,9 @@ struct SidecarResponse {
     #[serde(rename = "type")]
     response_type: String,
     #[serde(default)]
-    command: Option<String>,
-    #[serde(default)]
     data: Option<Value>,
     #[serde(default)]
     message: Option<String>,
-    #[serde(default)]
-    stage: Option<String>,
-    #[serde(default)]
-    percent: Option<u32>,
 }
 
 pub struct SidecarManager {

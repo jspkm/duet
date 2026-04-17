@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-const CURRENT_SCHEMA_VERSION: i32 = 1;
-
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -23,18 +21,6 @@ pub struct Recording {
     pub speaker_segments: Option<String>,
     pub name: Option<String>,
     pub session_type: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AnalysisResult {
-    pub id: i64,
-    pub recording_id: i64,
-    pub delivery_score: f64,
-    pub filler_word_count: i32,
-    pub hedging_count: i32,
-    pub deflection_count: i32,
-    pub pace_wpm: f64,
-    pub topic_segments: Option<String>, // JSON
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,16 +39,6 @@ pub struct FlaggedMoment {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DrillAttempt {
-    pub id: i64,
-    pub flagged_moment_id: i64,
-    pub attempted_at: String,
-    pub local_audio_path: String,
-    pub feedback_text: Option<String>,
-    pub improvement_score: Option<f64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct DashboardEntry {
     pub recording_id: i64,
     pub recorded_at: String,
@@ -76,17 +52,9 @@ pub struct DashboardEntry {
     pub drill_attempt_count: i32,
 }
 
-pub struct Topic {
-    pub id: i64,
-    pub name: String,
-    pub first_seen_at: String,
-    pub baseline_score: Option<f64>,
-    pub latest_score: Option<f64>,
-}
-
 impl Database {
     /// Get a lock on the underlying connection (for ad-hoc queries from commands).
-    pub fn conn(&self) -> Result<std::sync::MutexGuard<Connection>> {
+    pub fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.conn.lock().map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))
     }
 
@@ -366,27 +334,6 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn get_analysis_for_recording(&self, recording_id: i64) -> Result<AnalysisResult> {
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT id, recording_id, delivery_score, filler_word_count, hedging_count, deflection_count, pace_wpm, topic_segments
-             FROM analysis_results WHERE recording_id = ?1",
-            params![recording_id],
-            |row| {
-                Ok(AnalysisResult {
-                    id: row.get(0)?,
-                    recording_id: row.get(1)?,
-                    delivery_score: row.get(2)?,
-                    filler_word_count: row.get(3)?,
-                    hedging_count: row.get(4)?,
-                    deflection_count: row.get(5)?,
-                    pace_wpm: row.get(6)?,
-                    topic_segments: row.get(7)?,
-                })
-            },
-        )
-    }
-
     // -- Flagged Moments --
 
     pub fn insert_flagged_moment(
@@ -436,35 +383,6 @@ impl Database {
         rows.collect()
     }
 
-    // -- Drill Attempts --
-
-    pub fn insert_drill_attempt(
-        &self,
-        flagged_moment_id: i64,
-        audio_path: &str,
-    ) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO drill_attempts (flagged_moment_id, local_audio_path) VALUES (?1, ?2)",
-            params![flagged_moment_id, audio_path],
-        )?;
-        Ok(conn.last_insert_rowid())
-    }
-
-    pub fn update_drill_feedback(
-        &self,
-        id: i64,
-        feedback: &str,
-        improvement_score: f64,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE drill_attempts SET feedback_text = ?1, improvement_score = ?2 WHERE id = ?3",
-            params![feedback, improvement_score, id],
-        )?;
-        Ok(())
-    }
-
     pub fn get_dashboard_data(&self) -> Result<Vec<DashboardEntry>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -496,22 +414,4 @@ impl Database {
         rows.collect()
     }
 
-    pub fn get_drill_attempts_for_moment(&self, moment_id: i64) -> Result<Vec<DrillAttempt>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, flagged_moment_id, attempted_at, local_audio_path, feedback_text, improvement_score
-             FROM drill_attempts WHERE flagged_moment_id = ?1 ORDER BY attempted_at DESC"
-        )?;
-        let rows = stmt.query_map(params![moment_id], |row| {
-            Ok(DrillAttempt {
-                id: row.get(0)?,
-                flagged_moment_id: row.get(1)?,
-                attempted_at: row.get(2)?,
-                local_audio_path: row.get(3)?,
-                feedback_text: row.get(4)?,
-                improvement_score: row.get(5)?,
-            })
-        })?;
-        rows.collect()
-    }
 }

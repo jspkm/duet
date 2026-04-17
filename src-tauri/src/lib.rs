@@ -134,7 +134,7 @@ pub fn run() {
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
-                .menu_on_left_click(true)
+                .show_menu_on_left_click(true)
                 .tooltip("Duet")
                 .on_menu_event(move |app, event| {
                     let state: State<Recording> = app.state();
