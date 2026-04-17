@@ -109,9 +109,9 @@ pub fn run() {
 
             // Build tray menu
             let record_toggle =
-                MenuItemBuilder::with_id("record_toggle", "Start Session").build(app)?;
+                MenuItemBuilder::with_id("record_toggle", "Record").build(app)?;
             let pause =
-                MenuItemBuilder::with_id("pause", "Pause Session")
+                MenuItemBuilder::with_id("pause", "Pause")
                     .enabled(false)
                     .build(app)?;
             let sep1 = PredefinedMenuItem::separator(app)?;
@@ -144,8 +144,8 @@ pub fn run() {
                             if rec.is_recording {
                                 rec.is_recording = false;
                                 rec.is_paused = false;
-                                let _ = record_toggle_ref.set_text("Start Session");
-                                let _ = pause_ref.set_text("Pause Session");
+                                let _ = record_toggle_ref.set_text("Record");
+                                let _ = pause_ref.set_text("Pause");
                                 let _ = pause_ref.set_enabled(false);
                                 if let Some(window) = app.get_webview_window("main") {
                                     let _ = window.emit("recording-stopped", ());
@@ -153,7 +153,7 @@ pub fn run() {
                             } else {
                                 rec.is_recording = true;
                                 rec.is_paused = false;
-                                let _ = record_toggle_ref.set_text("Stop Session");
+                                let _ = record_toggle_ref.set_text("Stop");
                                 let _ = pause_ref.set_enabled(true);
                                 if let Some(window) = app.get_webview_window("main") {
                                     let _ = window.emit("recording-started", ());
@@ -165,9 +165,9 @@ pub fn run() {
                             if rec.is_recording {
                                 rec.is_paused = !rec.is_paused;
                                 let label = if rec.is_paused {
-                                    "Resume Session"
+                                    "Resume"
                                 } else {
-                                    "Pause Session"
+                                    "Pause"
                                 };
                                 let _ = pause_ref.set_text(label);
                                 if let Some(window) = app.get_webview_window("main") {

@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { useTheme } from "./theme";
 
-type Screen = "recordings" | "session_detail" | "dashboard" | "study" | "studyplan" | "settings" | "coach" | "coach_first";
+type Screen = "recordings" | "session_detail" | "dashboard" | "studyplan" | "settings" | "coach" | "coach_first";
 
 interface RecordingEntry {
   id: number;
@@ -150,10 +150,9 @@ function App() {
         <div className="sidebar-nav">
           {([
             ["dashboard", "Dashboard"],
-            ["recordings", "Sessions"],
-            ["study", "Knowledge Base"],
-            ["studyplan", "Study Plan"],
-            ["settings", "Settings"],
+            ["recordings", "Recording"],
+            ["studyplan", "Practice"],
+            ["settings", "Setting"],
           ] as [Screen, string][]).map(([key, label]) => (
             <a
               key={key}
@@ -189,7 +188,7 @@ function App() {
             }}
             onClick={() => setScreen("coach")}
           >
-            Practice
+            Start Practice
           </button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)", padding: "0 var(--space-md) var(--space-md)" }}>
@@ -218,7 +217,6 @@ function App() {
           />
         )}
         {screen === "dashboard" && <DashboardScreen />}
-        {screen === "study" && <KnowledgeCoachScreen />}
         {screen === "studyplan" && <StudyPlanScreen />}
         {screen === "settings" && <SettingsScreen />}
         {screen === "coach" && <CoachScreen forceFirst={false} />}
@@ -793,7 +791,7 @@ function StartSessionButton({ onComplete }: { onComplete: (id: number) => void }
           style={{ flex: 1, fontSize: 13, padding: "var(--space-sm) var(--space-md)" }}
           onClick={startRecording}
         >
-          Start Session
+          Record
         </button>
         <button
           className="btn start-session-dropdown"
@@ -895,7 +893,7 @@ function RecordingsScreen({ onSelect }: { onSelect: (id: number) => void }) {
 
   return (
     <>
-      <p className="page-label">Sessions</p>
+      <p className="page-label">Recording</p>
       <div style={{ display: "flex", gap: 2, marginBottom: "var(--space-md)" }}>
           <button
             onClick={() => toggleView("list")}
@@ -1232,7 +1230,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
         style={{ fontSize: 12, padding: "var(--space-xs) var(--space-sm)", marginBottom: "var(--space-md)" }}
         onClick={onBack}
       >
-        ← Sessions
+        ← Recording
       </button>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-xs)" }}>
@@ -1321,7 +1319,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
           <>
             <div
               style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer",
+                display: "flex", gap: "var(--space-sm)", alignItems: "center", cursor: "pointer",
                 position: transcriptExpanded ? "sticky" : "static",
                 top: 0, zIndex: 10,
                 background: "var(--color-surface)",
@@ -1332,12 +1330,16 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
               }}
               onClick={() => setTranscriptExpanded(!transcriptExpanded)}
             >
+              <svg
+                width="14" height="14" viewBox="0 0 12 12"
+                style={{ transition: "transform 0.2s", transform: transcriptExpanded ? "rotate(0deg)" : "rotate(-90deg)", flexShrink: 0 }}
+                aria-hidden="true"
+              >
+                <polygon points="2.5,3.5 9.5,3.5 6,9" fill="#ffffff" stroke="var(--color-text-secondary)" strokeWidth="1.2" strokeLinejoin="round" />
+              </svg>
               <h3 className="settings-heading" style={{ margin: 0 }}>Transcript</h3>
-              <span style={{ color: "var(--color-text-muted)", fontSize: 16, transition: "transform 0.2s", transform: transcriptExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>
-                ▾
-              </span>
             </div>
-            <div style={{ position: "relative", maxHeight: transcriptExpanded ? "none" : 140, overflow: "hidden" }}>
+            <div style={{ position: "relative", maxHeight: transcriptExpanded ? "none" : 72, overflow: "hidden" }}>
               {(() => {
                 let segments: { start: number; end: number; text: string; speaker: string | null }[] = [];
                 try {
@@ -1379,7 +1381,14 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
                 );
               })()}
               {!transcriptExpanded && (
-                <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 50, background: "linear-gradient(transparent, var(--color-surface))", pointerEvents: "none" }} />
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: 0, left: 0, right: 0, height: 32,
+                    background: "linear-gradient(transparent, var(--color-surface))",
+                    pointerEvents: "none",
+                  }}
+                />
               )}
             </div>
           </>
@@ -1389,7 +1398,7 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
       {recording && recording.session_type === "coach_first" && (
         <>
           <h3 className="settings-heading" style={{ marginBottom: "var(--space-sm)" }}>
-            Action Plan
+           Assessment
           </h3>
           <div className="card" style={{ marginBottom: "var(--space-md)" }}>
             {!firstImpression?.summary ? (
@@ -1403,6 +1412,29 @@ function SessionDetailScreen({ recordingId, onBack }: { recordingId: number | nu
             )}
           </div>
         </>
+      )}
+
+      {recording && recording.session_type === "coach_first" && firstImpression?.dimensions && firstImpression.dimensions.length > 0 && (
+        <div className="score-bars" style={{ marginBottom: "var(--space-lg)" }}>
+          {firstImpression.dimensions.map((d) => {
+            const pct = Math.max(0, Math.min(5, d.score)) / 5 * 100;
+            return (
+              <div key={d.key} className="score-bar-row">
+                <div className={`score-bar-fill score-${d.score}-bar`} style={{ width: `${pct}%` }} />
+                <span className="score-bar-label">{d.name}</span>
+                <span className="score-bar-value">{d.score}/5</span>
+              </div>
+            );
+          })}
+          <div className="score-bar-ticks" aria-hidden="true">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <span key={n} className="score-bar-tick">
+                <span className="score-bar-tick-mark" />
+                <span className="score-bar-tick-num">{n}</span>
+              </span>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Existing impression details */}
@@ -2301,7 +2333,7 @@ function StudyPlanScreen() {
 
   return (
     <>
-      <p className="page-label">Study Plan</p>
+      <p className="page-label">Practice</p>
 
       {/* Summary + filter */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-lg)" }}>
@@ -2482,7 +2514,7 @@ function StudyPlanScreen() {
   );
 }
 
-// ── Knowledge Base Screen ──────────────────────────────────
+// ── Subject type (used by RecordingsScreen for session tagging) ─
 
 interface SubjectEntry {
   id: number;
@@ -2492,273 +2524,6 @@ interface SubjectEntry {
   recording_count: number;
 }
 
-interface DocEntry {
-  id: number;
-  filename: string;
-  local_path: string;
-  chunk_size: number;
-}
-
-function KnowledgeCoachScreen() {
-  const [subjects, setSubjects] = useState<SubjectEntry[]>([]);
-  const [docs, setDocs] = useState<DocEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
-  const [showNewSubject, setShowNewSubject] = useState(false);
-  const [newSubjectName, setNewSubjectName] = useState("");
-  const [newSubjectDesc, setNewSubjectDesc] = useState("");
-  const [activeSubject, setActiveSubject] = useState<number | null>(null);
-
-  const loadData = useCallback(() => {
-    Promise.all([
-      invoke<SubjectEntry[]>("list_subjects"),
-      invoke<DocEntry[]>("list_documents"),
-    ])
-      .then(([s, d]) => { setSubjects(s); setDocs(d); })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { loadData(); }, [loadData]);
-
-  const handleCreateSubject = useCallback(async () => {
-    if (!newSubjectName.trim()) return;
-    await invoke("create_subject", {
-      name: newSubjectName.trim(),
-      description: newSubjectDesc.trim() || null,
-    });
-    setNewSubjectName("");
-    setNewSubjectDesc("");
-    setShowNewSubject(false);
-    loadData();
-  }, [newSubjectName, newSubjectDesc, loadData]);
-
-  const handleDeleteSubject = useCallback(async (id: number) => {
-    await invoke("delete_subject", { id });
-    if (activeSubject === id) setActiveSubject(null);
-    loadData();
-  }, [activeSubject, loadData]);
-
-  const handleUpload = useCallback(async () => {
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        multiple: true,
-        filters: [{ name: "Documents", extensions: ["pdf", "docx", "doc", "txt", "md"] }],
-      });
-      if (!selected) return;
-      const files = Array.isArray(selected) ? selected : [selected];
-      setUploading(true);
-
-      for (const filePath of files) {
-        const filename = filePath.split("/").pop() || filePath;
-        setUploadProgress(`Parsing ${filename}...`);
-        try {
-          const result = await invoke<{
-            filename: string;
-            chunks: { heading: string | null; text: string }[];
-          }>("parse_document", { filePath });
-          await invoke("save_document", {
-            filename: result.filename,
-            localPath: filePath,
-            chunksJson: JSON.stringify(result.chunks),
-          });
-          // If a subject is selected, assign the doc to it
-          if (activeSubject) {
-            const allDocs = await invoke<DocEntry[]>("list_documents");
-            const newest = allDocs[0]; // most recent
-            if (newest) {
-              await invoke("assign_document_subject", {
-                documentId: newest.id,
-                subjectId: activeSubject,
-              });
-            }
-          }
-        } catch (err) {
-          console.error(`Failed to parse ${filename}:`, err);
-        }
-      }
-      setUploadProgress(null);
-      setUploading(false);
-      loadData();
-    } catch (err) {
-      console.error("File picker error:", err);
-      setUploading(false);
-      setUploadProgress(null);
-    }
-  }, [loadData, activeSubject]);
-
-  const handleDeleteDoc = useCallback(async (id: number) => {
-    await invoke("delete_document", { id });
-    loadData();
-  }, [loadData]);
-
-  const handleAssignDoc = useCallback(async (docId: number, subjectId: number | null) => {
-    await invoke("assign_document_subject", { documentId: docId, subjectId });
-    loadData();
-  }, [loadData]);
-
-  return (
-    <>
-      <p className="page-label">Knowledge Base</p>
-      <h1 className="page-title">Your knowledge base</h1>
-
-      {/* Explainer */}
-      <div className="card" style={{ borderLeft: "3px solid var(--color-primary)" }}>
-        <p style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>
-          Organize your knowledge into subjects. Each subject has its own documents
-          and sessions. When Duet analyzes a session, it uses that subject's
-          documents as ground truth for coaching.
-        </p>
-      </div>
-
-      {/* Subject tabs */}
-      <div style={{ display: "flex", gap: "var(--space-sm)", flexWrap: "wrap", marginBottom: "var(--space-lg)", alignItems: "center" }}>
-        <button
-          className={`btn ${activeSubject === null ? "btn-primary" : "btn-secondary"}`}
-          style={{ fontSize: 13 }}
-          onClick={() => setActiveSubject(null)}
-        >
-          All
-        </button>
-        {subjects.map((s) => (
-          <button
-            key={s.id}
-            className={`btn ${activeSubject === s.id ? "btn-primary" : "btn-secondary"}`}
-            style={{ fontSize: 13 }}
-            onClick={() => setActiveSubject(s.id)}
-          >
-            {s.name}
-            <span style={{ opacity: 0.6, marginLeft: 4, fontSize: 11 }}>
-              {s.doc_count}
-            </span>
-          </button>
-        ))}
-        {!showNewSubject ? (
-          <button
-            className="btn btn-secondary"
-            style={{ fontSize: 13 }}
-            onClick={() => setShowNewSubject(true)}
-          >
-            + New subject
-          </button>
-        ) : (
-          <div style={{ display: "flex", gap: "var(--space-xs)", alignItems: "center" }}>
-            <input
-              className="input"
-              placeholder="Subject name"
-              value={newSubjectName}
-              onChange={(e) => setNewSubjectName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleCreateSubject()}
-              style={{ width: 160, fontSize: 13, padding: "var(--space-xs) var(--space-sm)" }}
-              autoFocus
-            />
-            <button className="btn btn-primary" style={{ fontSize: 12, padding: "var(--space-xs) var(--space-sm)" }} onClick={handleCreateSubject}>Add</button>
-            <button className="btn btn-secondary" style={{ fontSize: 12, padding: "var(--space-xs) var(--space-sm)" }} onClick={() => setShowNewSubject(false)}>×</button>
-          </div>
-        )}
-      </div>
-
-      {/* Active subject header */}
-      {activeSubject && (() => {
-        const subj = subjects.find((s) => s.id === activeSubject);
-        if (!subj) return null;
-        return (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-md)" }}>
-            <div>
-              <p style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 18 }}>{subj.name}</p>
-              {subj.description && (
-                <p style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{subj.description}</p>
-              )}
-              <div style={{ display: "flex", gap: "var(--space-sm)", marginTop: "var(--space-xs)" }}>
-                <span className="metric">{subj.doc_count} docs</span>
-                <span className="metric">{subj.recording_count} sessions</span>
-              </div>
-            </div>
-            <button
-              className="btn btn-secondary"
-              style={{ fontSize: 12 }}
-              onClick={() => handleDeleteSubject(subj.id)}
-            >
-              Delete subject
-            </button>
-          </div>
-        );
-      })()}
-
-      {/* Upload */}
-      <div style={{ marginBottom: "var(--space-lg)" }}>
-        <button className="btn btn-primary" onClick={handleUpload} disabled={uploading}>
-          {uploading ? uploadProgress || "Processing..." : "Upload documents"}
-        </button>
-        <span style={{ fontSize: 12, color: "var(--color-text-muted)", marginLeft: "var(--space-sm)" }}>
-          PDF, Word, TXT, Markdown
-          {activeSubject ? ` — will be added to ${subjects.find((s) => s.id === activeSubject)?.name}` : ""}
-        </span>
-      </div>
-
-      {/* Documents */}
-      {loading && <p style={{ color: "var(--color-text-muted)" }}>Loading...</p>}
-
-      {!loading && docs.length === 0 && (
-        <div className="card">
-          <p style={{ color: "var(--color-text-muted)", textAlign: "center", padding: "var(--space-xl) 0" }}>
-            No documents yet. Upload documents to build your knowledge base.
-          </p>
-        </div>
-      )}
-
-      {docs.map((doc) => (
-        <div key={doc.id} className="card" style={{ marginBottom: "var(--space-xs)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 14 }}>
-                {doc.filename}
-              </p>
-              <span className="metric" style={{ marginTop: 4 }}>
-                {doc.chunk_size > 0 ? `${Math.ceil(doc.chunk_size / 1000)}K chars` : "Empty"}
-              </span>
-            </div>
-            {subjects.length > 0 && (
-              <select
-                style={{
-                  padding: "var(--space-xs) var(--space-sm)",
-                  borderRadius: "var(--radius-sm)",
-                  border: "1px solid var(--color-border)",
-                  background: "var(--color-surface)",
-                  color: "var(--color-text-secondary)",
-                  fontSize: 12,
-                  marginRight: "var(--space-sm)",
-                  fontFamily: "var(--font-body)",
-                }}
-                onChange={(e) => handleAssignDoc(doc.id, e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">No subject</option>
-                {subjects.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            )}
-            <button
-              className="btn btn-secondary"
-              style={{ fontSize: 12, padding: "var(--space-xs) var(--space-sm)" }}
-              onClick={() => handleDeleteDoc(doc.id)}
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      ))}
-
-      {docs.length > 0 && (
-        <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: "var(--space-sm)" }}>
-          Documents stay on your device. Only text chunks are sent to the AI during analysis.
-        </p>
-      )}
-    </>
-  );
-}
 
 // ── Dashboard Screen ───────────────────────────────────────
 
@@ -2883,7 +2648,7 @@ function DashboardScreen() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "var(--space-md)", marginBottom: "var(--space-lg)" }}>
         <div className="card" style={{ textAlign: "center" }}>
           <p className="stat-value">{totalRecordings}</p>
-          <p className="stat-label">Sessions</p>
+          <p className="stat-label">Recording</p>
         </div>
         <div className="card" style={{ textAlign: "center" }}>
           <p className="stat-value">{latestScore > 0 ? latestScore.toFixed(1) : "—"}</p>
@@ -3858,8 +3623,8 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
         </p>
         <p style={{ fontSize: 16, color: "var(--color-text-secondary)", lineHeight: 1.7, maxWidth: 400, margin: "0 auto var(--space-lg)" }}>
           {isFirstSession
-            ? "Your coach is getting to know your voice and speech patterns. Your detailed analysis will appear in Sessions shortly."
-            : "Your practice session has been saved. A detailed analysis will appear in Sessions shortly."}
+            ? "Your coach is getting to know your voice and speech patterns. Your detailed analysis will appear in Recording shortly."
+            : "Your practice session has been saved. A detailed analysis will appear in Recording shortly."}
         </p>
         <a
           onClick={() => {
@@ -3872,7 +3637,7 @@ function CoachScreen({ forceFirst }: { forceFirst: boolean }) {
             textDecoration: "underline", textUnderlineOffset: 3,
           }}
         >
-          Go to Sessions
+          Go to Recording
         </a>
       </div>
     );
@@ -3970,7 +3735,7 @@ function SettingsScreen() {
 
   return (
     <>
-      <p className="page-label">Settings</p>
+      <p className="page-label">Setting</p>
 
       {/* Settings tabs */}
       <div style={{ display: "flex", gap: 0, borderRadius: "var(--radius-md)", overflow: "hidden", border: "1px solid var(--color-border)", marginBottom: "var(--space-lg)" }}>

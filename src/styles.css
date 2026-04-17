@@ -383,6 +383,87 @@ body {
 .score-4 { background: rgba(70, 160, 120, 0.16); color: #2f7a58; }
 .score-5 { background: rgba(50, 140, 200, 0.18); color: #226fa0; }
 
+/* Horizontal score bars, shown above the Action Plan. */
+.score-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.score-bar-row {
+  position: relative;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  overflow: visible;
+}
+.score-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--radius-sm);
+  transition: width 240ms ease;
+}
+.score-bar-label {
+  position: relative;
+  z-index: 1;
+  padding: 0 var(--space-sm);
+  font-family: var(--font-body, inherit);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.score-bar-value {
+  position: relative;
+  z-index: 1;
+  margin-left: auto;
+  padding-left: var(--space-sm);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
+}
+.score-bar-ticks {
+  position: relative;
+  height: 22px;
+  margin-top: 4px;
+  display: grid;
+  /* 5 ticks, each centered at 20%, 40%, 60%, 80%, 100% of bar width */
+  grid-template-columns: repeat(5, 1fr);
+}
+.score-bar-tick {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.score-bar-tick-mark {
+  width: 1px;
+  height: 5px;
+  background: var(--color-border);
+  transform: translateX(50%);
+}
+.score-bar-tick-num {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  transform: translateX(50%);
+}
+/* Bar fill colors — same palette as .score-N badges, a touch more saturated. */
+.score-1-bar { background: rgba(201, 64, 64, 0.28); }
+.score-2-bar { background: rgba(219, 130, 60, 0.30); }
+.score-3-bar { background: rgba(160, 160, 160, 0.32); }
+.score-4-bar { background: rgba(70, 160, 120, 0.30); }
+.score-5-bar { background: rgba(50, 140, 200, 0.32); }
+
 @keyframes pulse-ring {
   0%, 100% { box-shadow: 0 0 0 0 rgba(201, 64, 64, 0.3); }
   50% { box-shadow: 0 0 0 12px rgba(201, 64, 64, 0); }
